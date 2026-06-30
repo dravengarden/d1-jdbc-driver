@@ -63,25 +63,30 @@ class HttpEngineTest {
     }
 
     @Test
-    fun buildsCurlPipelineThatReadsTokenFromEnvFileNotArgv() {
+    fun wrapsThePipelineInBase64SoNestedQuotesSurviveShellLayers() {
         val cap = Capture("""{"success":true,"result":[{"results":[],"success":true,"meta":{}}]}""")
-        engine(cap).query("SELECT 1")
+        engine(cap).query("SELECT name FROM t WHERE x IN ('a', 'b')")
         val cmd = cap.argv
         assertEquals(listOf("sh", "-c"), cmd.take(2))
-        val pipeline = cmd[2]
-        assertTrue("api.cloudflare.com/client/v4/accounts/acc123/d1/database/db-uuid/query" in pipeline)
-        assertTrue("--data-raw" in pipeline && "SELECT 1" in pipeline)
-        // token read fresh from .env, piped via -H @-, never named on the command line
-        assertTrue("CLOUDFLARE_API_TOKEN" in pipeline && ".env" in pipeline)
-        assertTrue("-H @-" in pipeline)
+        // The outer command is base64-only — no quotes for a second shell layer
+        // (transport=ssh) to mangle.
+        val wrapper = cmd[2]
+        assertTrue(Regex("^printf %s [A-Za-z0-9+/=]+ \\| base64 -d \\| sh$").matches(wrapper), wrapper)
+        assertFalse("'" in wrapper, "the wrapper must contain no single quotes")
+        // The decoded script is the real pipeline: token from .env, piped header, curl.
+        val b64 = wrapper.removePrefix("printf %s ").substringBefore(' ')
+        val script = String(java.util.Base64.getDecoder().decode(b64))
+        assertTrue("api.cloudflare.com/client/v4/accounts/acc123/d1/database/db-uuid/query" in script)
+        assertTrue("--data-raw" in script && "x IN ('a', 'b')" in script)
+        assertTrue("CLOUDFLARE_API_TOKEN" in script && ".env" in script && "-H @-" in script)
     }
 
     @Test
     fun explicitTokenIsEmbeddedNotReadFromEnv() {
         val cap = Capture("""{"success":true,"result":[{"results":[],"success":true,"meta":{}}]}""")
         engine(cap, token = "cf-secret").query("SELECT 1")
-        val pipeline = cap.argv[2]
-        assertTrue("TOKEN='cf-secret'" in pipeline)
-        assertFalse("sed" in pipeline, "explicit token must not read the env file")
+        val script = String(java.util.Base64.getDecoder().decode(cap.argv[2].removePrefix("printf %s ").substringBefore(' ')))
+        assertTrue("TOKEN='cf-secret'" in script)
+        assertFalse("sed" in script, "explicit token must not read the env file")
     }
 }

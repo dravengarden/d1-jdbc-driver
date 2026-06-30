@@ -9,6 +9,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
+import java.util.Base64
 
 /**
  * Queries a remote (`mode=remote`) D1 via the Cloudflare D1 REST API — no Node,
@@ -41,7 +42,13 @@ public class HttpEngine(
     override fun query(sql: String): QueryResult {
         // JsonObject.toString() is valid, correctly-escaped JSON: {"sql":"…"}.
         val body = JsonObject(mapOf("sql" to JsonPrimitive(sql))).toString()
-        return parse(transport.run(listOf("sh", "-c", pipeline(body)), workingDir))
+        // The pipeline is full of single quotes (the JSON body, the SQL's own
+        // string literals). Over transport=ssh it goes through a SECOND shell-quote
+        // layer (SshTransport), which mangles those quotes and corrupts the SQL.
+        // base64 has no shell-special chars, so wrapping the script in it survives
+        // any number of shell layers; the host decodes and runs it verbatim.
+        val b64 = Base64.getEncoder().encodeToString(pipeline(body).toByteArray(Charsets.UTF_8))
+        return parse(transport.run(listOf("sh", "-c", "printf %s $b64 | base64 -d | sh"), workingDir))
     }
 
     /** A POSIX-sh one-liner: get the token, pipe the auth header to curl, POST the query. */
