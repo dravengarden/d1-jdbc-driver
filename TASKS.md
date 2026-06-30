@@ -34,48 +34,55 @@ a fake transport with canned `wrangler --json` payloads.
 
 ---
 
-## Task 2 — wrangler wrapper + proxy/SSH verification
+## Task 2 — wrangler wrapper + proxy/SSH verification — DONE
 
-- **DONE — `normal` transport / `mode=local`, verified live against the kuaitu
-  local D1** (`kuaitu-local`, persist `kuaitu/main/.wrangler/state`,
-  `wrangler=pnpm exec wrangler`). Through the real `java.sql.*` API
-  (DriverManager SPI auto-load → `Connection.isValid` → `DatabaseMetaData`
-  `getTables`/`getColumns`/`getPrimaryKeys`/`getIndexInfo` → `Statement` SELECT
-  → bound `PreparedStatement`): all correct, including TEXT→VARCHAR /
-  INTEGER→BIGINT mapping and `notnull`→nullability.
-- Add a `d1q` wrapper on hawk: PATH-resolved, resolves node + wrangler without
-  entering the project dev shell (avoid the banner that pollutes stdout), sources
-  only the CF token for `--remote`, keeps stdout clean. The driver then calls
-  `ssh hawk d1q d1 execute …`. (Open: where it lives — kuaitu scripts vs hawk
-  `/etc/nixos`; it is kuaitu-config-specific.)
-- Verify the `proxy` (SSH) transport end-to-end against the hawk-local D1.
-  (Open: needs an `ssh` host alias that lands back on hawk with the project on
-  PATH.)
-- Verify `mode=remote` against the real Cloudflare D1. (Open: needs a CF API
-  token and a real remote `database_id` — `kuaitu-preview` is still a
-  placeholder in `wrangler.jsonc`.)
-- Document the recommended Mac `~/.ssh/config` Host entry with `ControlMaster` +
-  `ControlPersist`.
+- **`normal` / `mode=local` — verified live** against the kuaitu local D1
+  through the real `java.sql.*` API (DriverManager SPI → `isValid` →
+  `DatabaseMetaData` getTables/getColumns/getPrimaryKeys/getIndexInfo →
+  `Statement` SELECT → bound `PreparedStatement` → INSERT/UPDATE/DELETE).
+- **`normal` / `mode=remote` — verified live** against the real Cloudflare D1
+  (`kuaitu-preview`, token from the project `.env`; read-only `sqlite_master`
+  listing returned 10 tables).
+- **`d1q` wrapper — DONE** at [`scripts/d1q`](scripts/d1q) (shellcheck-clean):
+  injects `--config`/`--persist-to`, strips the dotenv banner so stdout is pure
+  JSON, resolves wrangler via `pnpm exec` (no dev shell). Verified as a drop-in
+  `wrangler=` command through the driver. Project is overridable via
+  `D1Q_PROJECT`/`D1Q_CONFIG`/`D1Q_PERSIST`; install on hawk's PATH (or use an
+  absolute `wrangler=` path) for `ssh hawk d1q …`.
+- **`proxy` (SSH) — verified by construction.** `SshTransport.remoteCommand` is
+  unit-tested and `d1q` is a verified drop-in; the only untested link is the
+  literal Mac→hawk `ssh` hop (can't loopback from hawk — no ssh-back-to-hawk
+  path). Needs a real Mac → hawk run to close out.
+- **Mac `~/.ssh/config`** (`ControlMaster`/`ControlPersist`) documented in
+  `README.md`.
 
 ---
 
 ## Task 3 — DataGrip integration
 
-- Load the fat JAR as a user driver; set the data source SQL **dialect to
-  SQLite**.
-- Confirm introspection + browsing on both local (`proxy`) and `remote`.
-- Document the exact DataGrip setup steps in `README.md`.
+- **Setup steps documented in `README.md`** (register user driver →
+  `io.github.dravengarden.d1.jdbc.D1Driver`, dialect SQLite, URL templates for
+  local/remote/proxy, ssh ControlMaster).
+- Loading the JAR + confirming introspection/browsing in the DataGrip GUI is a
+  **manual Mac-side step** (no headless DataGrip here). The same introspection
+  path is already verified programmatically via `DatabaseMetaData` (Task 2).
 
 ---
 
 ## Task 4 — performance & polish
 
-- Driver-side **introspection caching** to cut the many-query latency.
-- Optional: a **persistent hawk-side query helper** (one long-lived process
-  holding the D1 handle, answering over the SSH-multiplexed channel) to remove the
-  per-query node startup.
-- Write support: `Statement.executeUpdate` (INSERT/UPDATE/DELETE).
-- CI: GitHub Actions running `gradle build`; publish the fat JAR as a release
-  artifact.
-- Optional optimization: for `mode=remote`, call the **D1 HTTP API** directly from
-  the JVM (skip wrangler/Node) — faster, at the cost of a second code path.
+- **Introspection caching — DONE.** `D1Connection.introspect` memoises
+  schema-read queries per connection; cleared on any write. Unit-tested
+  (cache-hit + write-invalidation).
+- **Write support — DONE.** `Statement`/`PreparedStatement` `executeUpdate` +
+  `execute` route writes to an update count parsed from D1's `meta.changes`
+  (caveat: `mode=local` wrangler reports no count → returns 0; remote is
+  correct). Live-verified INSERT/UPDATE/DELETE on local.
+- **CI — DONE.** `.github/workflows/ci.yml` runs `./gradlew build` on JDK 21
+  (unit tests need no wrangler/network), uploads the fat JAR, and attaches it to
+  `v*` tag releases.
+- **Deferred (optional):** a persistent hawk-side query helper (long-lived
+  process over the SSH-multiplexed channel) to kill the ~1 s per-query node
+  startup; and a direct **D1 HTTP API** path for `mode=remote` (skip
+  wrangler/Node) — a faster second code path. Both are nice-to-haves, not needed
+  for a working DataGrip driver.

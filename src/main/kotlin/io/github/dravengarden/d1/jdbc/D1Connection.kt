@@ -2,6 +2,7 @@ package io.github.dravengarden.d1.jdbc
 
 import io.github.dravengarden.d1.core.D1Config
 import io.github.dravengarden.d1.core.Wrangler
+import io.github.dravengarden.d1.model.QueryResult
 import java.sql.Connection
 import java.sql.DatabaseMetaData
 import java.sql.PreparedStatement
@@ -24,6 +25,20 @@ public class D1Connection internal constructor(
 
     private var closed = false
     private var autoCommit = true
+
+    /**
+     * Per-connection cache for schema-introspection queries. DataGrip issues the
+     * same `sqlite_master` / `PRAGMA` reads dozens of times while building a tree,
+     * and each is a ~1 s wrangler spawn; memoising them per connection makes a
+     * sweep cheap. Cleared whenever a write runs, since DDL can change the schema.
+     */
+    private val introspectionCache = HashMap<String, QueryResult>()
+
+    internal fun introspect(sql: String): QueryResult = introspectionCache.getOrPut(sql) { wrangler.execute(sql) }
+
+    internal fun invalidateIntrospection() {
+        introspectionCache.clear()
+    }
 
     /** Run `SELECT 1` so a misconfigured URL / unreachable backend fails at connect. */
     internal fun checkConnectivity() {

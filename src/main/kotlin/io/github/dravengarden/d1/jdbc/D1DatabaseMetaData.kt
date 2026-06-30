@@ -26,7 +26,7 @@ public class D1DatabaseMetaData(
 ) : AbstractDatabaseMetaData() {
     private val config = connection.config
 
-    private fun query(sql: String): QueryResult = connection.wrangler.execute(sql)
+    private fun query(sql: String): QueryResult = connection.introspect(sql)
 
     /** Read column [name] from a [QueryResult] row as text (or null). */
     private fun QueryResult.text(row: List<kotlinx.serialization.json.JsonElement>, name: String): String? {

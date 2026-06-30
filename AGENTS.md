@@ -120,6 +120,14 @@ would drift. Keep the JAR free of Node.
   `SQLFeatureNotSupportedException` for all of them; the `D1*` concrete classes
   override only what a browsing/SELECT client needs, so an unimplemented call
   fails loudly rather than misbehaving.
+- **`mode=local` wrangler reports no change count.** A local write's `meta` is
+  just `{"duration":0}` (no `changes`/`last_row_id`), so `executeUpdate` returns
+  0 even though the write succeeds. Remote D1 returns the real `changes`. Don't
+  treat a 0 from a local write as "nothing happened".
+- **Schema introspection is cached per connection** (`D1Connection.introspect`)
+  and **cleared on any write** (`invalidateIntrospection`), because DataGrip
+  re-issues the same `sqlite_master`/`PRAGMA` reads dozens of times per sweep and
+  each is a ~1 s spawn. User `SELECT`s are never cached.
 
 ## Status
 
@@ -130,9 +138,14 @@ D1.
 Task 1 — the `java.sql.*` connection layer (`D1Connection`, `D1Statement`,
 `D1PreparedStatement`, `D1ResultSet`, `D1ResultSetMetaData`,
 `D1DatabaseMetaData`, all delegating to the wrangler core) — is **implemented
-and green** (27 unit tests, fat JAR builds). `D1Driver.connect` opens a
+and green** (37 unit tests, fat JAR builds). `D1Driver.connect` opens a
 connection after a `SELECT 1` probe. **Live-verified** end-to-end against the
-real kuaitu local D1 via the `normal` transport (DriverManager →
-DatabaseMetaData introspection → Statement/PreparedStatement). Remaining work
-(SSH-proxy + remote verification, `d1q` wrapper, DataGrip wiring, write
-support, perf) is in **`TASKS.md`**.
+real kuaitu D1 — both `mode=local` (miniflare) and `mode=remote`
+(`kuaitu-preview` on Cloudflare) — through DriverManager → DatabaseMetaData
+introspection → Statement/PreparedStatement, including INSERT/UPDATE/DELETE.
+Also done: write support (`executeUpdate`), per-connection introspection
+caching, the `scripts/d1q` SSH-proxy wrapper, and GitHub Actions CI. The only
+unverified link is the literal Mac→hawk `ssh` hop of the `proxy` transport (its
+command construction is unit-tested; `d1q` is verified as a drop-in). Optional
+deferred items (persistent hawk-side query helper, direct D1 HTTP API for
+`mode=remote`) remain in **`TASKS.md`**.

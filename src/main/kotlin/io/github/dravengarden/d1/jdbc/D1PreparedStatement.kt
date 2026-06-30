@@ -21,6 +21,7 @@ public class D1PreparedStatement(
 ) : AbstractPreparedStatement() {
     private val params = mutableMapOf<Int, String>()
     private var current: D1ResultSet? = null
+    private var updateCount = -1
     private var closed = false
 
     private fun bind(index: Int, literal: String) {
@@ -28,17 +29,39 @@ public class D1PreparedStatement(
         params[index] = literal
     }
 
-    private fun run(): D1ResultSet {
+    private fun bound(): String {
         if (closed) throw SQLException("statement is closed")
-        current = D1ResultSet(wrangler.execute(substituteParams(sql, params)), this)
-        return current!!
+        return substituteParams(sql, params)
     }
 
-    override fun executeQuery(): ResultSet = run()
+    override fun executeQuery(): ResultSet {
+        val rs = D1ResultSet(wrangler.execute(bound()), this)
+        current = rs
+        updateCount = -1
+        return rs
+    }
+
+    override fun executeUpdate(): Int {
+        val result = wrangler.execute(bound())
+        connection.invalidateIntrospection()
+        current = null
+        updateCount = result.changes.toInt()
+        return updateCount
+    }
 
     override fun execute(): Boolean {
-        run()
-        return true
+        val text = bound()
+        return if (looksLikeQuery(text)) {
+            current = D1ResultSet(wrangler.execute(text), this)
+            updateCount = -1
+            true
+        } else {
+            val result = wrangler.execute(text)
+            connection.invalidateIntrospection()
+            current = null
+            updateCount = result.changes.toInt()
+            false
+        }
     }
 
     override fun clearParameters() {
@@ -80,10 +103,11 @@ public class D1PreparedStatement(
 
     override fun getResultSet(): ResultSet? = current
 
-    override fun getUpdateCount(): Int = -1
+    override fun getUpdateCount(): Int = updateCount
 
     override fun getMoreResults(): Boolean {
         current = null
+        updateCount = -1
         return false
     }
 

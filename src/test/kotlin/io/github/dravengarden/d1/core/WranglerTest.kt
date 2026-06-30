@@ -73,4 +73,12 @@ class WranglerTest {
         assertEquals(0, result.rows.size)
         assertEquals(emptyList(), result.columns)
     }
+
+    @Test
+    fun parsesWriteMeta() {
+        val result =
+            Wrangler.parse("""[ { "results": [], "success": true, "meta": {"changes": 5, "last_row_id": 99} } ]""")
+        assertEquals(5L, result.changes)
+        assertEquals(99L, result.lastRowId)
+    }
 }

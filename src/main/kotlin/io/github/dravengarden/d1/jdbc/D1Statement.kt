@@ -12,34 +12,56 @@ import java.sql.SQLWarning
  * whole result set into a [D1ResultSet]. Writes (`executeUpdate`) are deferred to
  * a later slice and fall through to [AbstractStatement] (throwing).
  */
-public open class D1Statement(
+public class D1Statement(
     private val connection: D1Connection,
     private val wrangler: Wrangler,
 ) : AbstractStatement() {
     private var current: D1ResultSet? = null
+    private var updateCount = -1
     private var closed = false
 
-    protected fun runSql(sql: String): D1ResultSet {
+    private fun require(sql: String?): String {
         if (closed) throw SQLException("statement is closed")
-        current = D1ResultSet(wrangler.execute(sql), this)
-        return current!!
+        return sql ?: throw SQLException("sql is null")
     }
 
-    private fun require(sql: String?): String = sql ?: throw SQLException("sql is null")
+    override fun executeQuery(sql: String?): ResultSet {
+        val rs = D1ResultSet(wrangler.execute(require(sql)), this)
+        current = rs
+        updateCount = -1
+        return rs
+    }
 
-    override fun executeQuery(sql: String?): ResultSet = runSql(require(sql))
+    override fun executeUpdate(sql: String?): Int {
+        val result = wrangler.execute(require(sql))
+        connection.invalidateIntrospection()
+        current = null
+        updateCount = result.changes.toInt()
+        return updateCount
+    }
 
     override fun execute(sql: String?): Boolean {
-        runSql(require(sql))
-        return true
+        val text = require(sql)
+        return if (looksLikeQuery(text)) {
+            current = D1ResultSet(wrangler.execute(text), this)
+            updateCount = -1
+            true
+        } else {
+            val result = wrangler.execute(text)
+            connection.invalidateIntrospection()
+            current = null
+            updateCount = result.changes.toInt()
+            false
+        }
     }
 
     override fun getResultSet(): ResultSet? = current
 
-    override fun getUpdateCount(): Int = -1
+    override fun getUpdateCount(): Int = updateCount
 
     override fun getMoreResults(): Boolean {
         current = null
+        updateCount = -1
         return false
     }
 

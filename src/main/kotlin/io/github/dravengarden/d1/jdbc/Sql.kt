@@ -12,6 +12,16 @@ import java.sql.SQLException
 /** Single-quote and escape a string for inlining as a SQL literal. */
 internal fun quoteSqlString(value: String): String = "'" + value.replace("'", "''") + "'"
 
+/**
+ * Whether [sql] is a row-returning statement (drives `execute`'s result-set vs
+ * update-count decision). wrangler's JSON can't distinguish a SELECT that matched
+ * no rows from a write, so the leading keyword is the only reliable signal.
+ */
+internal fun looksLikeQuery(sql: String): Boolean {
+    val keyword = sql.trimStart().takeWhile { !it.isWhitespace() && it != '(' }.uppercase()
+    return keyword in setOf("SELECT", "PRAGMA", "WITH", "EXPLAIN", "VALUES")
+}
+
 /** Render a bound JDBC value as the SQL literal that replaces its `?`. */
 internal fun sqlLiteralOf(value: Any?): String =
     when (value) {

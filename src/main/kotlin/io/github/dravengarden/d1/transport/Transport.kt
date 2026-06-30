@@ -52,8 +52,12 @@ public class SshTransport(
     private val host: String,
     private val sshOptions: List<String> = emptyList(),
 ) : Transport {
-    override fun run(command: List<String>, workingDir: String?): String {
-        val remote = buildString {
+    override fun run(command: List<String>, workingDir: String?): String =
+        exec(listOf("ssh") + sshOptions + listOf(host, remoteCommand(command, workingDir)), workingDir = null)
+
+    /** The single shell string sent to the remote: `cd <dir> && <argv…>`, quoted. */
+    internal fun remoteCommand(command: List<String>, workingDir: String?): String =
+        buildString {
             if (workingDir != null) {
                 append("cd ")
                 append(shellQuote(workingDir))
@@ -61,8 +65,6 @@ public class SshTransport(
             }
             append(command.joinToString(" ") { shellQuote(it) })
         }
-        return exec(listOf("ssh") + sshOptions + listOf(host, remote), workingDir = null)
-    }
 
     private fun shellQuote(arg: String): String = "'" + arg.replace("'", "'\\''") + "'"
 }
