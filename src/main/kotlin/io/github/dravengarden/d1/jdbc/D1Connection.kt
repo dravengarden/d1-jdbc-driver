@@ -1,7 +1,7 @@
 package io.github.dravengarden.d1.jdbc
 
 import io.github.dravengarden.d1.core.D1Config
-import io.github.dravengarden.d1.core.Wrangler
+import io.github.dravengarden.d1.core.Engine
 import io.github.dravengarden.d1.model.QueryResult
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
@@ -21,9 +21,9 @@ import java.sql.Statement
  */
 public class D1Connection internal constructor(
     internal val config: D1Config,
-    internal val wrangler: Wrangler,
+    internal val engine: Engine,
 ) : AbstractConnection() {
-    public constructor(config: D1Config) : this(config, Wrangler(config.toTransport(), config))
+    public constructor(config: D1Config) : this(config, config.toEngine())
 
     private var closed = false
     private var autoCommit = true
@@ -48,7 +48,7 @@ public class D1Connection internal constructor(
     internal fun execute(sql: String): QueryResult {
         synthetic(sql)?.let { return it }
         return try {
-            wrangler.execute(sql)
+            engine.query(sql)
         } catch (e: SQLException) {
             throw e
         } catch (e: Exception) {

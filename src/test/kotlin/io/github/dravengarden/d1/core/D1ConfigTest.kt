@@ -73,6 +73,31 @@ class D1ConfigTest {
     }
 
     @Test
+    fun autoEnginePicksSqliteForLocalWithPersistElseWrangler() {
+        // local + persist -> direct SQLite fast path
+        val local = D1Config.parse("jdbc:d1:?db=x&mode=local&persist=.wrangler/state", Properties())
+        assertEquals(EngineKind.AUTO, local.engine)
+        assertEquals(true, local.toEngine() is SqliteEngine)
+        // local without persist/file -> wrangler (can't resolve a file)
+        val noFile = D1Config.parse("jdbc:d1:?db=x&mode=local", Properties())
+        assertEquals(true, noFile.toEngine() is Wrangler)
+        // remote -> wrangler (http engine not wired yet)
+        val remote = D1Config.parse("jdbc:d1:?db=x&mode=remote", Properties())
+        assertEquals(true, remote.toEngine() is Wrangler)
+    }
+
+    @Test
+    fun engineCanBeForced() {
+        val c = D1Config.parse("jdbc:d1:?db=x&mode=local&persist=p&engine=wrangler", Properties())
+        assertEquals(EngineKind.WRANGLER, c.engine)
+        assertEquals(true, c.toEngine() is Wrangler)
+        val s = D1Config.parse("jdbc:d1:?db=x&engine=sqlite&file=/tmp/x.sqlite&sqlite=litecli", Properties())
+        assertEquals(listOf("litecli"), s.sqliteCommand)
+        assertEquals("/tmp/x.sqlite", s.sqliteFile)
+        assertEquals(true, s.toEngine() is SqliteEngine)
+    }
+
+    @Test
     fun apiTokenComesFromPasswordPropertyOnly() {
         val props = Properties().apply { setProperty("password", "cf-token-123") }
         assertEquals("cf-token-123", D1Config.parse("jdbc:d1:?db=x&mode=remote", props).apiToken)

@@ -12,6 +12,12 @@ public enum class Mode { LOCAL, REMOTE }
 public enum class TransportKind { NORMAL, SSH }
 
 /**
+ * How a query reaches the D1 data. `AUTO` picks the fast path that fits: a local
+ * SQLite read for `mode=local` (when a file is resolvable), else `WRANGLER`.
+ */
+public enum class EngineKind { AUTO, WRANGLER, SQLITE, HTTP }
+
+/**
  * Everything needed to run a D1 query, parsed from a single JDBC URL of the form
  *
  * ```
@@ -52,7 +58,30 @@ public data class D1Config(
      * ssh command line is unsafe.
      */
     val apiToken: String? = null,
+    /** Which engine runs queries (default [EngineKind.AUTO]). */
+    val engine: EngineKind = EngineKind.AUTO,
+    /** The sqlite shell for [EngineKind.SQLITE], token-split (default `["sqlite3"]`). */
+    val sqliteCommand: List<String> = listOf("sqlite3"),
+    /** Explicit `.sqlite` path for [EngineKind.SQLITE]; else resolved from [persistTo]. */
+    val sqliteFile: String? = null,
 ) {
+    /** The engine that actually runs queries, resolving [EngineKind.AUTO]. */
+    public fun toEngine(): Engine {
+        val transport = toTransport()
+        return when (resolveEngine()) {
+            EngineKind.SQLITE -> SqliteEngine(transport, sqliteCommand, workingDir, persistTo, sqliteFile)
+            EngineKind.HTTP -> error("the http engine is not implemented yet")
+            else -> Wrangler(transport, this)
+        }
+    }
+
+    private fun resolveEngine(): EngineKind =
+        when (engine) {
+            EngineKind.AUTO ->
+                if (mode == Mode.LOCAL && (persistTo != null || sqliteFile != null)) EngineKind.SQLITE else EngineKind.WRANGLER
+            else -> engine
+        }
+
     public fun toTransport(): Transport =
         when (transport) {
             TransportKind.NORMAL ->
@@ -100,8 +129,17 @@ public data class D1Config(
                     "remote" -> Mode.REMOTE
                     else -> error("unknown mode: $m (expected local|remote)")
                 }
+            val engine =
+                when (val e = value("engine")?.lowercase() ?: "auto") {
+                    "auto" -> EngineKind.AUTO
+                    "wrangler" -> EngineKind.WRANGLER
+                    "sqlite" -> EngineKind.SQLITE
+                    "http" -> EngineKind.HTTP
+                    else -> error("unknown engine: $e (expected auto|wrangler|sqlite|http)")
+                }
             val wrangler = tokens("wrangler").ifEmpty { listOf("wrangler") }
             val sshCommand = tokens("ssh").ifEmpty { listOf("ssh") }
+            val sqlite = tokens("sqlite").ifEmpty { listOf("sqlite3") }
             val timeout =
                 value("timeout")?.let {
                     it.toLongOrNull()?.takeIf { n -> n > 0 } ?: error("invalid timeout= (expected positive seconds)")
@@ -125,6 +163,9 @@ public data class D1Config(
                 cacheIntrospection = flag("cache", default = true),
                 // Token comes ONLY from the password property, never the URL.
                 apiToken = props.getProperty("password")?.takeIf { it.isNotEmpty() },
+                engine = engine,
+                sqliteCommand = sqlite,
+                sqliteFile = value("file"),
             )
         }
 

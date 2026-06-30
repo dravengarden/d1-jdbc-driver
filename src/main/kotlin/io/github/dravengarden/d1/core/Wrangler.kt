@@ -4,20 +4,19 @@ import io.github.dravengarden.d1.model.QueryResult
 import io.github.dravengarden.d1.model.WranglerResult
 import io.github.dravengarden.d1.transport.Transport
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 
 /**
- * The functional core: turns a SQL string into a `wrangler d1 execute … --json`
- * invocation, runs it through a [Transport], and parses the JSON back into a
- * [QueryResult]. No JDBC here — this is independently testable.
+ * The wrangler-backed [Engine]: turns a SQL string into a `wrangler d1 execute …
+ * --json` invocation, runs it through a [Transport], and parses the JSON back
+ * into a [QueryResult]. No JDBC here — this is independently testable.
  */
 public class Wrangler(
     private val transport: Transport,
     private val config: D1Config,
-) {
-    public fun execute(sql: String): QueryResult = parse(transport.run(buildArgs(sql), config.workingDir))
+) : Engine {
+    override fun query(sql: String): QueryResult = parse(transport.run(buildArgs(sql), config.workingDir))
 
     internal fun buildArgs(sql: String): List<String> =
         buildList {
@@ -63,16 +62,7 @@ public class Wrangler(
             val meta = last?.meta
             val changes = meta?.get("changes")?.jsonPrimitive?.longOrNull ?: 0L
             val lastRowId = meta?.get("last_row_id")?.jsonPrimitive?.longOrNull
-            val rows = last?.results ?: emptyList()
-            if (rows.isEmpty()) {
-                return QueryResult(emptyList(), emptyList(), changes, lastRowId)
-            }
-            val columns = rows.first().keys.toList()
-            val tabular =
-                rows.map { row ->
-                    columns.map { col -> row[col] ?: JsonNull }
-                }
-            return QueryResult(columns, tabular, changes, lastRowId)
+            return tabulate(last?.results ?: emptyList(), changes, lastRowId)
         }
     }
 }

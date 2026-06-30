@@ -1,7 +1,6 @@
 package io.github.dravengarden.d1.cli
 
 import io.github.dravengarden.d1.core.D1Config
-import io.github.dravengarden.d1.core.Wrangler
 import java.util.Properties
 import kotlin.system.exitProcess
 
@@ -19,7 +18,7 @@ public fun main(args: Array<String>) {
         exitProcess(2)
     }
     val config = D1Config.parse(args[0], Properties())
-    val result = Wrangler(config.toTransport(), config).execute(args[1])
+    val result = config.toEngine().query(args[1])
 
     println(result.columns.joinToString(" | "))
     println("-".repeat(40))
