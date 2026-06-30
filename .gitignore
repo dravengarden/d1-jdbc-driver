@@ -1,0 +1,15 @@
+# Gradle / Kotlin
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.kotlin/
+
+# OS / direnv
+.direnv/
+.DS_Store
