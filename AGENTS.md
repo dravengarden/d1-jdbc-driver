@@ -48,12 +48,15 @@ java -cp build/libs/d1-jdbc-driver-*.jar io.github.dravengarden.d1.cli.MainKt \
 ```
 src/main/kotlin/io/github/dravengarden/d1/
   model/      WranglerResult, QueryResult (@Serializable)
-  transport/  Transport (interface) + LocalTransport (normal) + SshTransport (proxy)
-  core/       D1Config (URL parsing), Wrangler (command build + JSON parse)
+  transport/  Transport (where a command runs): LocalTransport / SshTransport
+  core/       D1Config (URL parsing) + Engine (how a query runs):
+              Wrangler (wrangler d1 execute), SqliteEngine (read the local
+              <hash>.sqlite directly via sqlite3). Engine × Transport are
+              orthogonal — any engine runs local or over ssh.
   jdbc/       D1Driver + the java.sql.* layer (Connection/Statement/
               PreparedStatement/ResultSet/ResultSetMetaData/DatabaseMetaData).
-              Abstract*… are throwing stub bases; D1*… are the concrete classes
-              delegating to the wrangler core.
+              Abstract*… are throwing stub bases; D1*… are the concrete classes,
+              all routing SQL through D1Connection.execute → the Engine.
   cli/        Main (smoke runner over the core)
 src/main/resources/META-INF/services/java.sql.Driver   (SPI registration)
 src/test/kotlin/...                                     (unit tests)

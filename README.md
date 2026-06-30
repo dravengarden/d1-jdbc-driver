@@ -26,6 +26,7 @@ Shadow (fat JAR), JUnit 5. Builds on a Nix flake dev shell.
 - [How it works](#how-it-works)
 - [Prerequisites](#prerequisites)
 - [Quick start](#quick-start)
+- [Engines](#engines) — wrangler / sqlite / http, and the engine × transport matrix
 - [Connection URL reference](#connection-url-reference)
 - [Recipes](#recipes) — local / remote / proxy / read-only / multi-DB / SSH options
 - [Use in DataGrip](#use-in-datagrip)
@@ -51,31 +52,47 @@ JDBC client ──▶ d1-jdbc-driver
   Dialect: set to SQLite in the client
 ```
 
-Two orthogonal axes, both set in the URL:
+Three orthogonal axes, all set in the URL:
 
-- **transport** — *where* wrangler runs: `normal` (this machine) or `ssh`/`proxy`
-  (a remote host over SSH).
 - **mode** — *which* D1: `local` (miniflare's on-disk SQLite) or `remote` (the
   cloud database).
+- **engine** — *how* a query reaches the data:
+  - `wrangler` — shell out to `wrangler d1 execute` (works for local and remote).
+  - `sqlite` — read the local miniflare SQLite file directly (no Node; ~ms vs
+    ~1.5 s). `mode=local` only.
+  - `http` — the Cloudflare D1 REST API directly (no Node). `mode=remote` only.
+    *(planned — not wired yet.)*
+  - `auto` (default) — local → `sqlite` when a file is resolvable, else `wrangler`.
+- **transport** — *where* that engine runs: `normal` (this machine) or
+  `ssh`/`proxy` (a remote host over SSH).
 
 `mode=local` must run on the machine that owns the `.wrangler/state` dir;
-`mode=remote` can run on either side.
+`mode=remote` can run on either side. See [Engines](#engines) for the full
+matrix and the per-engine dependencies.
 
 ---
 
 ## Prerequisites
 
-| Side | Needs |
-|---|---|
-| **Client** (where the JDBC app / DataGrip runs) | the driver JAR; a JVM (the host app already has one); for `proxy`, an `ssh` client |
-| **Server** (where wrangler runs — same machine for `normal`, the remote for `proxy`) | **`wrangler`** reachable (global on PATH, or point `wrangler=` at it) and, for `proxy`, **`sshd`** |
+**Client** (where the JDBC app / DataGrip runs): the driver JAR; a JVM (the host
+app already has one); for `proxy`, an `ssh` client. Nothing else — no Node, no
+Cloudflare token locally (unless you run a non-proxy `engine=http`).
 
-That's the whole server-side contract: **`wrangler` + `sshd`**. Nothing
-project-specific is installed there — every parameter travels in the URL.
+**The host that runs the engine** (the same machine for `transport=normal`, the
+remote for `transport=ssh`/proxy) needs **only the small CLI the chosen engine
+shells out to** — plus `sshd` for proxy:
 
-`wrangler` is **not** bundled: it's a Node CLI that must match the project's
-version + `wrangler.jsonc` + `.wrangler/state`, so a bundled copy would drift.
-The JAR carries no Node.
+| engine | the host needs | for |
+|---|---|---|
+| `wrangler` | **`wrangler`** on PATH (or point `wrangler=` at it) — a Node CLI | local + remote |
+| `sqlite` | **`sqlite3`** on PATH (or point `sqlite=` at it) | local only |
+| `http` *(planned)* | **`curl`** on PATH (or nothing, if the JVM calls it directly) | remote only |
+
+So for the common **proxy + fast local** setup, the remote host needs just
+**`sqlite3` + `sshd`**. None of these tools is bundled in the JAR — they're
+external on purpose (a Node CLI / SQLite build must match the environment, and
+the JAR stays tiny and dependency-free). Everything else travels in the URL;
+nothing project-specific is installed on the host.
 
 ---
 
@@ -87,16 +104,49 @@ The JAR carries no Node.
    nix develop -c gradle build      # → build/libs/d1-jdbc-driver-<version>.jar
    ```
 
-2. **Smoke-test the core** without a JDBC client — one query straight through
-   wrangler:
+2. **Smoke-test the core** without a JDBC client — one query straight through the
+   resolved engine (`auto` → `sqlite` here, since `mode=local` + `persist`):
 
    ```bash
    java -cp build/libs/d1-jdbc-driver-*.jar io.github.dravengarden.d1.cli.MainKt \
-     "jdbc:d1:?db=mydb-local&mode=local&dir=/path/to/project&config=wrangler.jsonc&persist=.wrangler/state" \
+     "jdbc:d1:?db=mydb-local&mode=local&persist=/path/to/project/.wrangler/state" \
      "SELECT name FROM sqlite_master WHERE type='table'"
    ```
 
 3. **Wire it into a JDBC client** — see [DataGrip](#use-in-datagrip) below.
+
+---
+
+## Engines
+
+An **engine** decides *how* a query reaches the data; a **transport** decides
+*where* the engine runs. They're independent, so any engine can run locally or on
+a remote host over SSH:
+
+| engine ＼ transport | `normal` (this machine) | `ssh` (remote host) |
+|---|---|---|
+| **wrangler** | wrangler here | wrangler on the remote |
+| **sqlite** (local only) | read the file here | read the file on the remote |
+| **http** (remote only, *planned*) | this machine → Cloudflare | curl on the remote → Cloudflare |
+
+- **`wrangler`** — the portable default. Works for `local` and `remote`, matches
+  the project's wrangler config/state exactly. Cost: each query is a ~1.5 s Node
+  + miniflare cold-start.
+- **`sqlite`** (`mode=local`) — the local D1 *is* a SQLite file on disk; this
+  reads it directly with `sqlite3` (~ms, no Node). Opened **read-only** with a
+  busy timeout, so it runs safely alongside a live `wrangler dev` and sees its
+  committed writes. Writes aren't supported on this engine — use
+  `engine=wrangler` for those. The file is auto-resolved under
+  `<persist>/v3/d1/…`, or set `file=`.
+- **`http`** (`mode=remote`, *planned*) — call the Cloudflare D1 REST API
+  directly, no Node. With `transport=ssh` the request egresses from the remote
+  host (useful when its network path to Cloudflare is better than the client's).
+- **`auto`** (default) — `mode=local` with a resolvable file → `sqlite`,
+  otherwise `wrangler`.
+
+**Pick by editing the URL**, e.g. `&engine=sqlite` or `&engine=wrangler`. The
+matrix is just `engine=…` × `transport=…`; the [recipes](#recipes) below show the
+common combinations.
 
 ---
 
@@ -113,16 +163,19 @@ jdbc:d1:?db=<name>&mode=<local|remote>&transport=<normal|ssh>&...
 |---|---|---|
 | `db` | — (required) | D1 database name (as in `wrangler.jsonc`) |
 | `mode` | `local` | `local` (miniflare) or `remote` (cloud) |
-| `transport` | `normal` | `normal` (run wrangler here) or `ssh` / `proxy` (run it on `host`) |
+| `engine` | `auto` | `auto` / `wrangler` / `sqlite` / `http` — see [Engines](#engines) |
+| `transport` | `normal` | `normal` (run the engine here) or `ssh` / `proxy` (run it on `host`) |
 | `host` | — | SSH target for proxy mode (`user@ip` or a `~/.ssh/config` alias) |
-| `dir` | — | working directory where wrangler runs (the project root) |
+| `dir` | — | working directory where the engine's command runs (the project root) |
 | `env` | — | wrangler named environment (e.g. `preview`, `production`) |
-| `config` | — | path to `wrangler.jsonc` (resolved on the machine running wrangler) |
-| `persist` | — | `--persist-to` dir for `mode=local` (e.g. `.wrangler/state`) |
+| `config` | — | path to `wrangler.jsonc` (wrangler engine; resolved on the machine running it) |
+| `persist` | — | `--persist-to` dir for `mode=local`; also where the `sqlite` engine finds the file |
 | `wrangler` | `wrangler` | the wrangler command, token-split (e.g. `pnpm exec wrangler`) |
+| `sqlite` | `sqlite3` | the sqlite3 command for `engine=sqlite`, token-split |
+| `file` | — | explicit `.sqlite` path for `engine=sqlite` (else auto-resolved from `persist`) |
 | `ssh` | `ssh` | the ssh command for `transport=ssh`, token-split |
 | `ssh-opts` | — | extra non-secret ssh args, token-split (e.g. `-p 2222 -o ProxyJump=bastion`) |
-| `timeout` | `120` | per-command wrangler timeout, in seconds |
+| `timeout` | `120` | per-command timeout, in seconds |
 | `probe` | `true` | run a `SELECT 1` connectivity check on connect |
 | `readonly` | `false` | reject all writes on this connection |
 | `cache` | `true` | cache schema introspection per connection |
@@ -133,8 +186,8 @@ Notes:
 - **URL-encode** spaces in multi-token values, or rely on your client's field:
   `wrangler=pnpm%20exec%20wrangler`. The driver also accepts them verbatim when
   the value comes from a JDBC property.
-- **Paths** (`dir`, `config`, `persist`) are resolved on whichever machine runs
-  wrangler — the **remote** for `proxy`.
+- **Paths** (`dir`, `config`, `persist`, `file`) are resolved on whichever
+  machine runs the engine — the **remote** for `proxy`.
 - **No secrets in the URL.** SSH keys/passphrase stay in `~/.ssh/config` + agent;
   the Cloudflare token stays in the project `.env` or the `password` property
   (see [Authentication](#authentication)).
@@ -146,11 +199,23 @@ Notes:
 ### Local D1 (miniflare) on this machine
 
 ```
-jdbc:d1:?db=mydb-local&mode=local&dir=/path/to/project&config=wrangler.jsonc&persist=.wrangler/state
+jdbc:d1:?db=mydb-local&mode=local&persist=.wrangler/state
 ```
 
-`persist` must point at the same `--persist-to` your `wrangler dev` uses, or
-wrangler opens a different empty DB and you get `no such table`.
+`engine=auto` reads the file directly with `sqlite3` (fast). `persist` must point
+at the same `--persist-to` your `wrangler dev` uses, or you'll resolve a
+different / empty DB. Force the legacy wrangler path with `&engine=wrangler`
+(then also pass `dir`/`config`).
+
+### Fast local browsing over proxy (recommended for a remote dev box)
+
+```
+jdbc:d1:?transport=ssh&host=devbox&db=mydb-local&mode=local&persist=/srv/project/.wrangler/state
+```
+
+`engine=auto` → `sqlite` runs `ssh devbox sqlite3 -readonly …` against the file —
+~ms per query instead of ~1.5 s. The remote box needs **`sqlite3` + `sshd`**
+(no Node). Read-only; for writes add `&engine=wrangler`.
 
 ### Remote (cloud) D1
 
@@ -275,7 +340,7 @@ Programmatic use is ordinary JDBC:
 
 ```java
 try (Connection c = DriverManager.getConnection(
-        "jdbc:d1:?db=mydb-local&mode=local&dir=/path/to/project&config=wrangler.jsonc&persist=.wrangler/state")) {
+        "jdbc:d1:?db=mydb-local&mode=local&persist=/path/to/project/.wrangler/state")) {
     try (Statement s = c.createStatement();
          ResultSet rs = s.executeQuery("SELECT id, email FROM accounts")) {
         while (rs.next()) System.out.println(rs.getString("id") + " " + rs.getString("email"));
@@ -322,19 +387,28 @@ The token is never written to the URL or logged by the driver.
 
 ## Performance
 
-- A per-query `wrangler` spawn is **~1 s** (Node + miniflare/network startup).
-  Fine for browsing; not a high-QPS path.
+- **Use `engine=sqlite` for local** (it's the `auto` default). A `wrangler d1
+  execute` spawn is **~1.5 s** — almost all Node + miniflare cold-start, not the
+  query. Reading the SQLite file directly with `sqlite3` is **~ms**. Over proxy,
+  add SSH `ControlMaster` (below) so the ssh hop is reused too.
 - **Schema introspection is cached per connection** (the repeated
   `sqlite_master` / `PRAGMA` reads a client issues while building its tree), and
   the cache is cleared on any write. Disable with `cache=false`.
 - Tune the per-command ceiling with `timeout=<seconds>`; skip the connect-time
   probe with `probe=false`.
-- **Advanced (local only):** the miniflare DB is a real SQLite file at
-  `<persist>/v3/d1/miniflare-D1DatabaseObject/<hash>.sqlite`. For read-heavy local
-  work you can point a native SQLite driver straight at it (no ~1 s spawn) — but
-  the filename is an opaque hash, and you must **not** have `wrangler dev` writing
-  to it concurrently (SQLite single-writer lock). The d1-jdbc-driver is the
-  portable path that also works for `remote` and `proxy`.
+- **SSH multiplexing** for proxy — each query is a fresh `ssh`; reuse one
+  connection so you don't re-handshake. In the client's `~/.ssh/config`:
+
+  ```
+  Host devbox
+      ControlMaster auto
+      ControlPath ~/.ssh/cm-%r@%h:%p
+      ControlPersist 5m
+  ```
+
+- `mode=remote` still pays the network round-trip to Cloudflare per query (and,
+  with `engine=wrangler`, a Node spawn on top); the planned `engine=http` drops
+  the Node spawn.
 
 ---
 
@@ -342,9 +416,11 @@ The token is never written to the URL or logged by the driver.
 
 - **One connection = one D1 database.** Use a separate data source per database /
   environment (see the [multi-DB recipe](#multiple-databases--environments)).
-- **`mode=local` reports no row-change count.** A local write succeeds but
-  `executeUpdate` returns `0` (wrangler's local `meta` omits `changes`). Remote
-  reports it correctly.
+- **`engine=sqlite` is read-only.** It's for fast browsing; INSERT/UPDATE/DELETE
+  fail with `readonly database`. Use `engine=wrangler` to write to a local D1.
+- **`engine=wrangler` + `mode=local` reports no row-change count.** A local write
+  succeeds but `executeUpdate` returns `0` (wrangler's local `meta` omits
+  `changes`). Remote reports it correctly.
 - **Result sets are forward-only, read-only** (`TYPE_FORWARD_ONLY`,
   `CONCUR_READ_ONLY`). The whole result is materialized in memory (wrangler
   returns it all at once).
@@ -358,16 +434,19 @@ The token is never written to the URL or logged by the driver.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `no such table: X` (local) | `persist=` missing or wrong; wrangler opened a different default DB | point `persist=` at the dir holding `.wrangler/state` that your `wrangler dev` uses |
+| `no such table: X` (local) | `persist=` missing or wrong; a different default DB was opened | point `persist=` at the dir holding `.wrangler/state` that your `wrangler dev` uses |
+| `sqlite3: not found` (engine=sqlite) | `sqlite3` not on the engine host's PATH | install `sqlite3` on that host (or point `sqlite=` at it); for `proxy` it's the **remote** host's non-interactive ssh PATH |
+| `no local D1 SQLite file under …` | `wrangler dev`/migrations haven't created the local DB yet, or `persist=` is wrong | run the app once locally; verify `persist=` |
+| `readonly database` | writing through `engine=sqlite` | add `&engine=wrangler` for writes |
 | `command failed (exit 127)` / `wrangler: not found` | wrangler not on the PATH of the machine running it | set `wrangler=` (e.g. `pnpm exec wrangler` or an absolute path), or install wrangler globally; for `proxy`, ensure it's on the server's non-interactive ssh PATH |
 | remote: `Authentication error` / 403 | no/invalid Cloudflare API token | put `CLOUDFLARE_API_TOKEN` in the project `.env`, or pass it as the `password` property |
 | `connection is read-only` | `readonly=true` is set | remove it, or call `setReadOnly(false)` on the connection |
 | proxy: `Host key verification failed` / `Permission denied (publickey)` | ssh can't verify the host or auth non-interactively | fix `~/.ssh/config` + `known_hosts` + key/agent; confirm with `ssh <host> true` |
 | `command timed out after 120s` | slow query or cold start | raise `timeout=<seconds>` |
-| `executeUpdate` returns `0` on a local write | expected — local wrangler omits the change count | the write **did** apply; use `mode=remote` if you need the count |
+| `executeUpdate` returns `0` on a local write (`engine=wrangler`) | expected — local wrangler omits the change count | the write **did** apply; use `mode=remote` if you need the count |
 
-For deeper digging, run the same query through the [CLI](#quick-start) to see
-wrangler's raw behavior outside JDBC.
+For deeper digging, run the same query through the [CLI](#quick-start) to see the
+engine's raw behavior outside JDBC.
 
 ---
 
