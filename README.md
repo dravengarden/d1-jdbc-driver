@@ -72,8 +72,10 @@ jdbc:d1:?db=mydb-production&mode=remote&env=production            # transport de
 
 - **`normal`** — run `wrangler` on the machine running the JDBC client.
 - **`proxy`** (`transport=ssh`) — run `wrangler` on a remote host (e.g. a dev
-  server) over SSH; the client side needs only SSH access, no wrangler and no
-  Cloudflare token locally.
+  server) over SSH; the client side needs only an SSH client, no wrangler and no
+  Cloudflare token locally. The **server side needs only `wrangler` + `sshd`** —
+  nothing project-specific; every parameter (`dir`/`config`/`persist`/`db`/…)
+  travels in the URL.
 
 `mode=local` must run where the `.wrangler/state` lives; `mode=remote` can run
 either side.
@@ -97,14 +99,17 @@ Output: `build/libs/d1-jdbc-driver-<version>.jar`.
 ## Try the core (CLI)
 
 The CLI runs one query straight through the wrangler core — handy for smoke
-tests without a JDBC client. It spawns `wrangler`, so node/pnpm must be
-reachable, and `--local` needs `--persist-to`:
+tests without a JDBC client. It spawns `wrangler`, so wrangler must be reachable,
+and `--local` needs `--persist-to`:
 
 ```
 java -cp build/libs/d1-jdbc-driver-*.jar io.github.dravengarden.d1.cli.MainKt \
-  "jdbc:d1:?db=mydb-local&mode=local&dir=/path/to/project&config=edge/worker/wrangler.jsonc&persist=.wrangler/state&wrangler=pnpm exec wrangler" \
+  "jdbc:d1:?db=mydb-local&mode=local&dir=/path/to/project&config=wrangler.jsonc&persist=.wrangler/state" \
   "SELECT * FROM accounts"
 ```
+
+(Add `&wrangler=pnpm exec wrangler` if wrangler is a project-local install
+rather than on PATH.)
 
 ## Use in DataGrip
 
@@ -115,35 +120,39 @@ java -cp build/libs/d1-jdbc-driver-*.jar io.github.dravengarden.d1.cli.MainKt \
      auto-detect it from the JAR's SPI registration).
    - **Dialect**: **SQLite** — D1 *is* SQLite, and the introspector relies on it.
    - **URL template** (optional): `jdbc:d1:?db=[{db}]&mode=[{mode}]`.
-2. **Create a data source** using that driver and paste a `jdbc:d1:?…` URL:
+2. **Create a data source** using that driver and paste a `jdbc:d1:?…` URL.
+   Everything is in the URL — no server-side wrapper or config file:
 
    ```
-   # local miniflare, wrangler runs on this machine
-   jdbc:d1:?db=kuaitu-local&mode=local&dir=/path/to/project&config=edge/worker/wrangler.jsonc&persist=.wrangler/state&wrangler=pnpm exec wrangler
+   # local miniflare — wrangler runs on this machine
+   jdbc:d1:?db=mydb-local&mode=local&dir=/path/to/project&config=wrangler.jsonc&persist=.wrangler/state
 
-   # remote cloud DB, wrangler runs on this machine (token from the project .env)
-   jdbc:d1:?db=kuaitu-preview&mode=remote&env=preview&dir=/path/to/project&config=edge/worker/wrangler.jsonc&wrangler=pnpm exec wrangler
+   # remote cloud DB — wrangler runs on this machine
+   jdbc:d1:?db=mydb&mode=remote&env=production&dir=/path/to/project&config=wrangler.jsonc
 
-   # proxy: wrangler runs on hawk over SSH; this machine needs only ssh + the d1q wrapper on hawk
-   jdbc:d1:?transport=ssh&host=hawk&db=kuaitu-local&mode=local&wrangler=d1q
+   # proxy — wrangler runs on a remote server over SSH; this machine needs only ssh
+   jdbc:d1:?transport=ssh&host=myserver&db=mydb-local&mode=local&dir=/path/on/server&config=wrangler.jsonc&persist=.wrangler/state
    ```
 3. **Test Connection** — the driver runs `SELECT 1`; a green check means it
    reached the D1. Then expand the schema tree to browse tables/columns and run
    SQL in a console.
 
 Notes:
-- The **Password** field can hold a Cloudflare API token; pass it through as the
-  `password` JDBC property for `--remote` in `normal` mode if you don't keep the
-  token in the project `.env`.
-- For the `proxy` transport, install [`scripts/d1q`](scripts/d1q) on **hawk** so
-  `ssh hawk d1q d1 execute …` resolves it. Either put it on hawk's `PATH` or set
-  `wrangler=` to its absolute path. Recommended Mac `~/.ssh/config` so each query
-  reuses one SSH connection instead of re-handshaking:
+- **`wrangler` defaults to the `wrangler` on PATH.** If your project pins a
+  local wrangler instead of a global one, add `wrangler=` — e.g.
+  `wrangler=pnpm exec wrangler`, or the path to `node_modules/.bin/wrangler`.
+  All paths (`dir`/`config`/`persist`) are resolved on whichever machine runs
+  wrangler (the remote, for `proxy`).
+- The **Password** field can hold a Cloudflare API token; pass it as the
+  `password` JDBC property for `--remote` if you don't keep the token in the
+  project's `.env`.
+- For the `proxy` transport, a Mac `~/.ssh/config` with connection multiplexing
+  avoids re-handshaking on every query:
 
   ```
-  Host hawk
-      HostName 192.168.0.96
-      User draven
+  Host myserver
+      HostName 10.0.0.5
+      User me
       ControlMaster auto
       ControlPath ~/.ssh/cm-%r@%h:%p
       ControlPersist 5m

@@ -28,7 +28,7 @@ public data class D1Config(
     val mode: Mode,
     val env: String?,
     val configPath: String?,
-    /** The wrangler command, token-split (e.g. `["wrangler"]`, `["d1q"]`). */
+    /** The wrangler command, token-split (e.g. `["wrangler"]`, `["pnpm", "exec", "wrangler"]`). */
     val wranglerCommand: List<String>,
     /** `--persist-to` for local mode (miniflare state dir, e.g. `.wrangler/state`). */
     val persistTo: String? = null,

@@ -104,9 +104,10 @@ would drift. Keep the JAR free of Node.
 - **`--persist-to` is required for `mode=local`.** Without it, wrangler opens a
   different default DB and reports `no such table`. The `persist=` URL param maps
   to `--persist-to`.
-- **The dev shell / wrangler prints a banner to stdout** (e.g. `kuaitu: loaded
-  .env`); `Wrangler.parse` slices from the first `[` so a banner does not break
-  JSON parsing. Prefer a wrapper (`d1q`) that keeps stdout clean.
+- **wrangler/dotenv prints a banner to stdout** (e.g. `… loaded .env`);
+  `Wrangler.parse` slices from the first `[` so a banner does not break JSON
+  parsing. (This is why the driver needs no clean-stdout wrapper — keep config in
+  the URL, not in a server-side script.)
 - **`Transport` is a plain interface, not sealed** — a sealed interface cannot be
   implemented from the test module.
 - A per-query `wrangler` spawn is ~1.1 s (node + miniflare startup), plus network
@@ -144,8 +145,9 @@ real kuaitu D1 — both `mode=local` (miniflare) and `mode=remote`
 (`kuaitu-preview` on Cloudflare) — through DriverManager → DatabaseMetaData
 introspection → Statement/PreparedStatement, including INSERT/UPDATE/DELETE.
 Also done: write support (`executeUpdate`), per-connection introspection
-caching, the `scripts/d1q` SSH-proxy wrapper, and GitHub Actions CI. The only
-unverified link is the literal Mac→hawk `ssh` hop of the `proxy` transport (its
-command construction is unit-tested; `d1q` is verified as a drop-in). Optional
-deferred ideas: a persistent hawk-side query helper (kill the ~1 s per-query
-node startup) and a direct D1 HTTP API path for `mode=remote`.
+caching, and GitHub Actions CI. Everything is URL-driven — the `proxy` server
+side needs only `wrangler` + `sshd`, nothing project-specific. The only
+unverified link is the literal client→server `ssh` hop of the `proxy` transport
+(its command construction is unit-tested). Optional deferred ideas: a persistent
+server-side query helper (kill the ~1 s per-query node startup) and a direct D1
+HTTP API path for `mode=remote`.
