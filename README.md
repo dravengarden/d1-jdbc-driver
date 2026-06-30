@@ -296,8 +296,21 @@ try (Connection c = DriverManager.getConnection(
     a secret over ssh).
 - **SSH (`proxy`)** — fully delegated to the OS `ssh` client: keys, `known_hosts`,
   agent, and `~/.ssh/config`. The driver puts **no** credential in the URL;
-  `ssh-opts` is for non-secret flags only. Verify non-interactively first:
-  `ssh <host> true`.
+  `ssh-opts` is for non-secret flags only.
+
+  **Passwordless (key-based) SSH is required.** The driver runs `ssh <host> …`
+  per query with no TTY, so an interactive password/passphrase prompt would just
+  fail. Set it up and verify once before configuring the data source:
+
+  ```bash
+  ssh-copy-id <user>@<host>          # if the key isn't authorized yet
+  ssh -o BatchMode=yes <host> true   # must succeed with NO prompt
+  ```
+
+  First contact also needs the host key accepted — run a plain `ssh <host> true`
+  once interactively to store it in `known_hosts`. For speed, reuse one
+  connection across queries with `ControlMaster` (see the
+  [DataGrip tip](#use-in-datagrip)).
 
 The token is never written to the URL or logged by the driver.
 
