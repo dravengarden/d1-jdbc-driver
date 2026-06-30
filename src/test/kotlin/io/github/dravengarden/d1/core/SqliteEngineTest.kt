@@ -13,6 +13,15 @@ class SqliteEngineTest {
     }
 
     @Test
+    fun multiStatementTakesTheLastArray() {
+        // sqlite3 -json prints one array per statement, newline-separated.
+        val out = "[{\"a\":1}]\n[{\"name\":\"accounts\"},\n{\"name\":\"sessions\"}]\n"
+        val r = SqliteEngine.parse(out)
+        assertEquals(listOf("name"), r.columns)
+        assertEquals(2, r.rows.size)
+    }
+
+    @Test
     fun parsesEmptyOutputAsNoRows() {
         // sqlite3 -json prints nothing when a query returns no rows.
         assertEquals(0, SqliteEngine.parse("").rows.size)

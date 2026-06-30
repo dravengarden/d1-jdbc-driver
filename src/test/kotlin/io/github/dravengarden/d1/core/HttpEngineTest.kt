@@ -42,6 +42,19 @@ class HttpEngineTest {
     }
 
     @Test
+    fun multiStatementReturnsTheLastResult() {
+        // A client may send `<setup>; <query>`; the final statement's rows win.
+        val multi =
+            """{"success":true,"result":[
+                 {"results":[{"a":1}],"success":true,"meta":{}},
+                 {"results":[{"name":"accounts"},{"name":"sessions"}],"success":true,"meta":{}}
+               ],"errors":[]}"""
+        val r = HttpEngine.parse(multi)
+        assertEquals(listOf("name"), r.columns)
+        assertEquals(2, r.rows.size)
+    }
+
+    @Test
     fun surfacesApiErrors() {
         val err = """{"success":false,"result":[],"errors":[{"code":7500,"message":"no such table"}]}"""
         val e = assertFailsWith<IllegalStateException> { HttpEngine.parse(err) }

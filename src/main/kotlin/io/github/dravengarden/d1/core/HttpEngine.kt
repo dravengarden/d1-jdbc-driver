@@ -80,11 +80,14 @@ public class HttpEngine(
                 val why = resp.errors.joinToString("; ") { "[${it.code}] ${it.message}" }.ifEmpty { stdout.take(300) }
                 error("D1 API error: $why")
             }
-            val first = resp.result.firstOrNull()
-            val meta = first?.meta
+            // The D1 API returns one result per statement; take the LAST (matching
+            // Wrangler.parse) so a multi-statement query — as a client may send for
+            // introspection — yields the final statement's rows, not the first.
+            val last = resp.result.lastOrNull()
+            val meta = last?.meta
             val changes = meta?.get("changes")?.jsonPrimitive?.longOrNull ?: 0L
             val lastRowId = meta?.get("last_row_id")?.jsonPrimitive?.longOrNull
-            return tabulate(first?.results ?: emptyList(), changes, lastRowId)
+            return tabulate(last?.results ?: emptyList(), changes, lastRowId)
         }
     }
 }

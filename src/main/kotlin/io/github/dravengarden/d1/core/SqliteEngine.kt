@@ -2,8 +2,11 @@ package io.github.dravengarden.d1.core
 
 import io.github.dravengarden.d1.model.QueryResult
 import io.github.dravengarden.d1.transport.Transport
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.json.DecodeSequenceMode
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.decodeToSequence
 
 /**
  * Reads a local (`mode=local`) D1 directly as the SQLite file miniflare keeps on
@@ -60,12 +63,22 @@ public class SqliteEngine(
         private const val MINIFLARE_D1_SUBDIR = "v3/d1/miniflare-D1DatabaseObject"
         private val json = Json { ignoreUnknownKeys = true }
 
-        /** `sqlite3 -json` prints a bare `[ {…} ]` array (or nothing for no rows). */
+        /**
+         * `sqlite3 -json` prints a bare `[ {…} ]` array per statement (nothing for
+         * no rows), one after another for a multi-statement command. Decode the
+         * whole stream and take the LAST array — matching the other engines, so a
+         * `<setup>; <query>` from a client yields the query's rows.
+         */
+        @OptIn(ExperimentalSerializationApi::class)
         internal fun parse(stdout: String): QueryResult {
             val start = stdout.indexOf('[')
             if (start < 0) return QueryResult(emptyList(), emptyList())
-            val rows = json.decodeFromString<List<JsonObject>>(stdout.substring(start))
-            return tabulate(rows)
+            val arrays =
+                json.decodeToSequence<List<JsonObject>>(
+                    stdout.substring(start).byteInputStream(),
+                    DecodeSequenceMode.WHITESPACE_SEPARATED,
+                ).toList()
+            return tabulate(arrays.lastOrNull() ?: emptyList())
         }
     }
 }
