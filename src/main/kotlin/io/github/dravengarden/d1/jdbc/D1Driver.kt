@@ -31,7 +31,10 @@ public class D1Driver : Driver {
             try {
                 connection.checkConnectivity()
             } catch (e: Exception) {
-                throw SQLException("failed to reach d1 (db=${config.database}): ${e.message}", e)
+                // Plain SQLException with no custom cause: a client may run the
+                // driver out-of-process (DataGrip/RMI) and cannot deserialize a
+                // TransportException it has never seen.
+                throw SQLException("failed to reach d1 (db=${config.database}): ${e.message}")
             }
         }
         return connection

@@ -1,6 +1,5 @@
 package io.github.dravengarden.d1.jdbc
 
-import io.github.dravengarden.d1.core.Wrangler
 import java.math.BigDecimal
 import java.sql.Connection
 import java.sql.ResultSet
@@ -16,7 +15,6 @@ import java.sql.SQLWarning
  */
 public class D1PreparedStatement(
     private val connection: D1Connection,
-    private val wrangler: Wrangler,
     private val sql: String,
 ) : AbstractPreparedStatement() {
     private val params = mutableMapOf<Int, String>()
@@ -35,7 +33,7 @@ public class D1PreparedStatement(
     }
 
     override fun executeQuery(): ResultSet {
-        val rs = D1ResultSet(wrangler.execute(bound()), this)
+        val rs = D1ResultSet(connection.execute(bound()), this)
         current = rs
         updateCount = -1
         return rs
@@ -44,7 +42,7 @@ public class D1PreparedStatement(
     override fun executeUpdate(): Int {
         val text = bound()
         connection.requireWritable()
-        val result = wrangler.execute(text)
+        val result = connection.execute(text)
         connection.invalidateIntrospection()
         current = null
         updateCount = result.changes.toInt()
@@ -54,12 +52,12 @@ public class D1PreparedStatement(
     override fun execute(): Boolean {
         val text = bound()
         return if (looksLikeQuery(text)) {
-            current = D1ResultSet(wrangler.execute(text), this)
+            current = D1ResultSet(connection.execute(text), this)
             updateCount = -1
             true
         } else {
             connection.requireWritable()
-            val result = wrangler.execute(text)
+            val result = connection.execute(text)
             connection.invalidateIntrospection()
             current = null
             updateCount = result.changes.toInt()

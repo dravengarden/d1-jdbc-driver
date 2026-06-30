@@ -3,6 +3,7 @@ package io.github.dravengarden.d1.jdbc
 import io.github.dravengarden.d1.core.D1Config
 import io.github.dravengarden.d1.core.Wrangler
 import io.github.dravengarden.d1.model.QueryResult
+import kotlinx.serialization.json.JsonPrimitive
 import java.sql.Connection
 import java.sql.DatabaseMetaData
 import java.sql.PreparedStatement
@@ -35,8 +36,38 @@ public class D1Connection internal constructor(
      */
     private val introspectionCache = HashMap<String, QueryResult>()
 
+    /**
+     * The single point where SQL reaches wrangler. Translates ANY failure into a
+     * plain [SQLException] — never a custom exception class — because a JDBC client
+     * may run the driver out-of-process (DataGrip over RMI) and cannot deserialize
+     * a `TransportException` it has never seen, turning the real error into a
+     * confusing "class not found". Also short-circuits queries D1 blocks but a
+     * client needs (e.g. `PRAGMA database_list`) with a synthetic result.
+     */
+    internal fun execute(sql: String): QueryResult {
+        synthetic(sql)?.let { return it }
+        return try {
+            wrangler.execute(sql)
+        } catch (e: SQLException) {
+            throw e
+        } catch (e: Exception) {
+            throw SQLException(e.message ?: e.toString())
+        }
+    }
+
     internal fun introspect(sql: String): QueryResult =
-        if (config.cacheIntrospection) introspectionCache.getOrPut(sql) { wrangler.execute(sql) } else wrangler.execute(sql)
+        if (config.cacheIntrospection) introspectionCache.getOrPut(sql) { execute(sql) } else execute(sql)
+
+    /** Results for statements D1 rejects but a SQLite client expects (schema list). */
+    private fun synthetic(sql: String): QueryResult? =
+        when (sql.trim().trimEnd(';').lowercase()) {
+            "pragma database_list" ->
+                QueryResult(
+                    columns = listOf("seq", "name", "file"),
+                    rows = listOf(listOf(JsonPrimitive(0), JsonPrimitive("main"), JsonPrimitive(""))),
+                )
+            else -> null
+        }
 
     internal fun invalidateIntrospection() {
         introspectionCache.clear()
@@ -49,14 +80,14 @@ public class D1Connection internal constructor(
 
     /** Run `SELECT 1` so a misconfigured URL / unreachable backend fails at connect. */
     internal fun checkConnectivity() {
-        wrangler.execute("SELECT 1")
+        execute("SELECT 1")
     }
 
     private fun require(sql: String?): String = sql ?: throw SQLException("sql is null")
 
     override fun createStatement(): Statement {
         ensureOpen()
-        return D1Statement(this, wrangler)
+        return D1Statement(this)
     }
 
     override fun createStatement(resultSetType: Int, resultSetConcurrency: Int): Statement = createStatement()
@@ -69,7 +100,7 @@ public class D1Connection internal constructor(
 
     override fun prepareStatement(sql: String?): PreparedStatement {
         ensureOpen()
-        return D1PreparedStatement(this, wrangler, require(sql))
+        return D1PreparedStatement(this, require(sql))
     }
 
     override fun prepareStatement(

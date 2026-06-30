@@ -1,6 +1,5 @@
 package io.github.dravengarden.d1.jdbc
 
-import io.github.dravengarden.d1.core.Wrangler
 import java.sql.Connection
 import java.sql.ResultSet
 import java.sql.SQLException
@@ -8,13 +7,12 @@ import java.sql.SQLWarning
 
 /**
  * A read-oriented [java.sql.Statement] backed by the wrangler core. Each
- * `execute`/`executeQuery` runs one `wrangler d1 execute` and materialises the
- * whole result set into a [D1ResultSet]. Writes (`executeUpdate`) are deferred to
- * a later slice and fall through to [AbstractStatement] (throwing).
+ * `execute`/`executeQuery` runs one `wrangler d1 execute` (via
+ * [D1Connection.execute], which normalises errors to [SQLException]) and
+ * materialises the whole result set into a [D1ResultSet].
  */
 public class D1Statement(
     private val connection: D1Connection,
-    private val wrangler: Wrangler,
 ) : AbstractStatement() {
     private var current: D1ResultSet? = null
     private var updateCount = -1
@@ -26,7 +24,7 @@ public class D1Statement(
     }
 
     override fun executeQuery(sql: String?): ResultSet {
-        val rs = D1ResultSet(wrangler.execute(require(sql)), this)
+        val rs = D1ResultSet(connection.execute(require(sql)), this)
         current = rs
         updateCount = -1
         return rs
@@ -35,7 +33,7 @@ public class D1Statement(
     override fun executeUpdate(sql: String?): Int {
         val text = require(sql)
         connection.requireWritable()
-        val result = wrangler.execute(text)
+        val result = connection.execute(text)
         connection.invalidateIntrospection()
         current = null
         updateCount = result.changes.toInt()
@@ -45,12 +43,12 @@ public class D1Statement(
     override fun execute(sql: String?): Boolean {
         val text = require(sql)
         return if (looksLikeQuery(text)) {
-            current = D1ResultSet(wrangler.execute(text), this)
+            current = D1ResultSet(connection.execute(text), this)
             updateCount = -1
             true
         } else {
             connection.requireWritable()
-            val result = wrangler.execute(text)
+            val result = connection.execute(text)
             connection.invalidateIntrospection()
             current = null
             updateCount = result.changes.toInt()
