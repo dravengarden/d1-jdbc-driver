@@ -225,16 +225,20 @@ hosts, or an identity *path* (`-i ~/.ssh/id_ed25519`) — never a passphrase.
 
 ## Use in DataGrip
 
-1. **Register the driver** — *Settings → Database → Drivers → +* (or *Database
-   Explorer → + → Driver*). Name it `Cloudflare D1`.
-   - **Driver Files**: add `build/libs/d1-jdbc-driver-<version>.jar`.
-   - **Class**: `io.github.dravengarden.d1.jdbc.D1Driver` (usually auto-detected
-     from the JAR's SPI registration).
+1. **Register the driver.** Driver management is **not** in *Settings* — open the
+   **Data Sources and Drivers** dialog (**⌘;** / *File → Data Sources…*, or the
+   Database Explorer toolbar **+ → Driver**). In its left pane select the
+   **Drivers** group, click **+**, and name it `Cloudflare D1`.
+   - **Driver Files**: **+** → add `build/libs/d1-jdbc-driver-<version>.jar`.
+   - **Class**: pick `io.github.dravengarden.d1.jdbc.D1Driver` (listed once the
+     JAR is added, via the JAR's SPI registration).
    - **Dialect**: **SQLite** — D1 *is* SQLite, and the introspector relies on it.
    - **URL template** (optional): `jdbc:d1:?db=[{db}]&mode=[{mode}]`.
 
-2. **Create a data source** with that driver and paste a `jdbc:d1:?…` URL from
-   [Recipes](#recipes). No server-side wrapper or config file is needed.
+2. **Create a data source.** In the same dialog's **Data Sources** group, click
+   **+** → pick your **Cloudflare D1** driver, and paste a `jdbc:d1:?…` URL from
+   [Recipes](#recipes) into the URL field. No server-side wrapper or config file
+   is needed.
 
 3. **Test Connection** — the driver runs `SELECT 1`; a green check means it
    reached the D1. Then expand the schema tree to browse tables/columns and open
