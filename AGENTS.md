@@ -50,7 +50,10 @@ src/main/kotlin/io/github/dravengarden/d1/
   model/      WranglerResult, QueryResult (@Serializable)
   transport/  Transport (interface) + LocalTransport (normal) + SshTransport (proxy)
   core/       D1Config (URL parsing), Wrangler (command build + JSON parse)
-  jdbc/       D1Driver (java.sql.Driver) — the only JDBC class implemented so far
+  jdbc/       D1Driver + the java.sql.* layer (Connection/Statement/
+              PreparedStatement/ResultSet/ResultSetMetaData/DatabaseMetaData).
+              Abstract*… are throwing stub bases; D1*… are the concrete classes
+              delegating to the wrangler core.
   cli/        Main (smoke runner over the core)
 src/main/resources/META-INF/services/java.sql.Driver   (SPI registration)
 src/test/kotlin/...                                     (unit tests)
@@ -109,10 +112,24 @@ would drift. Keep the JAR free of Node.
 - A per-query `wrangler` spawn is ~1.1 s (node + miniflare startup), plus network
   for `--remote`. Fine for v1; cache introspection, and consider a persistent
   hawk-side helper later.
+- **kotlinx `JsonNull` IS a `JsonPrimitive`** whose `.content` is the string
+  `"null"`. Any cell→value coercion must test `is JsonNull` *before* reading
+  `content`, or a SQL NULL silently becomes the text `"null"` (see `D1Types`).
+- **The `java.sql.*` interfaces have no default methods** — a class must
+  implement every member. The `Abstract*` bases throw
+  `SQLFeatureNotSupportedException` for all of them; the `D1*` concrete classes
+  override only what a browsing/SELECT client needs, so an unimplemented call
+  fails loudly rather than misbehaving.
 
 ## Status
 
 Slice 1 — scaffold + transport (normal/ssh) + wrangler core + `D1Driver`
 registration + CLI + unit tests — is **done and green**; the CLI queries a real
-D1. The `java.sql.*` connection layer is **not** implemented yet
-(`D1Driver.connect` throws). Remaining work is in **`TASKS.md`**.
+D1.
+
+Task 1 — the `java.sql.*` connection layer (`D1Connection`, `D1Statement`,
+`D1PreparedStatement`, `D1ResultSet`, `D1ResultSetMetaData`,
+`D1DatabaseMetaData`, all delegating to the wrangler core) — is **implemented
+and green** (27 unit tests, fat JAR builds). `D1Driver.connect` opens a
+connection after a `SELECT 1` probe. Remaining work (live proxy/remote
+verification, DataGrip wiring, write support, perf) is in **`TASKS.md`**.

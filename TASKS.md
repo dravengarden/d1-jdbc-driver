@@ -5,41 +5,32 @@ Remaining work. Slice 1 (project scaffold + `Transport` (normal/ssh) + the
 green** — the CLI already queries a real D1. See `AGENTS.md` for build/run and the
 architecture.
 
-Order: Task 1 is what makes the driver usable in DataGrip; do it first.
+Order: Task 2 is the next step — verify the implemented JDBC layer against a real
+local/remote D1 before wiring DataGrip.
 
 ---
 
-## Task 1 — JDBC connection layer (`java.sql.*`)
+## Task 1 — JDBC connection layer (`java.sql.*`) — DONE
 
-Make the driver usable from a JDBC client. Implement, all delegating to the
-existing `core.Wrangler`:
+The full `java.sql.*` layer is implemented in `jdbc/`, all delegating to
+`core.Wrangler`, with 27 unit tests and a building fat JAR:
 
-- `D1Connection : java.sql.Connection`
-- `D1Statement` / `D1PreparedStatement`
-- `D1ResultSet` + `D1ResultSetMetaData` — map each `JsonElement` cell to JDBC
-  types. SQLite/D1 is dynamically typed; a reasonable mapping is
-  TEXT → `VARCHAR`, INTEGER → `BIGINT`, REAL → `DOUBLE`, NULL → `NULL`,
-  BLOB → `BLOB`. Implement `wasNull`, `getString/getInt/getLong/getDouble/
-  getObject`, `next`, `findColumn`, `getMetaData`.
-- `D1DatabaseMetaData`:
-  - `getTables()` → `SELECT name, type FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%'`
-  - `getColumns()` → `PRAGMA table_info(<table>)`
-  - `getPrimaryKeys()` → `PRAGMA table_info` (pk column), `getIndexInfo()` →
-    `PRAGMA index_list` / `index_info`.
+- `D1Connection` (autocommit-only; `isValid` runs `SELECT 1`),
+  `D1Statement`, `D1PreparedStatement` (client-side positional-`?`
+  substitution), `D1ResultSet` + `D1ResultSetMetaData` (cell→JDBC mapping:
+  TEXT → `VARCHAR`, INTEGER → `BIGINT`, REAL → `DOUBLE`, NULL → `NULL`).
+- `D1DatabaseMetaData`: `getTables` (sqlite_master), `getColumns` /
+  `getPrimaryKeys` (`PRAGMA table_info`), `getIndexInfo`
+  (`PRAGMA index_list` / `index_info`), plus SQLite-appropriate capability
+  predicates so introspection never hits a thrown stub.
+- `Abstract{Connection,Statement,PreparedStatement,ResultSet,DatabaseMetaData}`
+  throwing stub bases (the redis/mongo-jdbc-driver approach).
+- `D1Driver.connect` builds a `D1Connection` after a `SELECT 1` probe and wraps
+  any backend failure in a `SQLException`.
 
-Implementation notes:
-
-- Use **abstract base classes** that implement each interface with
-  `throw SQLFeatureNotSupportedException()` defaults, then override only what is
-  needed. Reference the structure of `DataGrip/redis-jdbc-driver` and
-  `DataGrip/mongo-jdbc-driver` (Kotlin, same approach).
-- Wire `D1Driver.connect` to build a `D1Connection` (run a `SELECT 1` connectivity
-  check first).
-- **Implement `Connection.isValid` correctly** — if it returns `false`, DataGrip
-  closes the connection as invalid.
-
-Acceptance: from a JDBC client, the connection opens, the schema tree lists tables
-and columns, and `SELECT …` returns rows.
+Still UNVERIFIED against a real D1 (no wrangler/credentials in the build
+sandbox) — that is Task 2. The mapping/reshaping is covered by unit tests using
+a fake transport with canned `wrangler --json` payloads.
 
 ---
 

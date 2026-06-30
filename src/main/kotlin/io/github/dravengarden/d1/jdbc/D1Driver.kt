@@ -22,12 +22,17 @@ public class D1Driver : Driver {
 
     override fun connect(url: String?, info: Properties?): Connection? {
         if (!acceptsURL(url)) return null
-        // Validate the URL eagerly so misconfiguration surfaces here.
-        D1Config.parse(url!!, info ?: Properties())
-        // The java.sql.* layer (Connection / Statement / ResultSet / DatabaseMetaData)
-        // is the next slice; the wrangler core (io.github.dravengarden.d1.core) is
-        // complete and exercised by the CLI + tests.
-        throw SQLException("d1 JDBC connection layer not implemented yet (slice 2)")
+        // Validate the URL eagerly so misconfiguration surfaces here, then prove the
+        // backend answers before handing back a connection — DataGrip treats a
+        // connection it cannot validate as dead.
+        val config = D1Config.parse(url!!, info ?: Properties())
+        val connection = D1Connection(config)
+        try {
+            connection.checkConnectivity()
+        } catch (e: Exception) {
+            throw SQLException("failed to reach d1 (db=${config.database}): ${e.message}", e)
+        }
+        return connection
     }
 
     override fun getPropertyInfo(url: String?, info: Properties?): Array<DriverPropertyInfo> =
