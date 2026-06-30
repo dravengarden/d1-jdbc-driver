@@ -48,6 +48,20 @@ class D1ErrorHandlingTest {
     }
 
     @Test
+    fun authDeniedPragmaBecomesEmptyButUserQueryStillThrows() {
+        // D1 denies PRAGMA on its internal _cf_* tables; that must not abort a sweep.
+        val authDenied = object : Transport {
+            override fun run(command: List<String>, workingDir: String?): String =
+                throw RuntimeException("D1 API error: [7500] not authorized: SQLITE_AUTH")
+        }
+        val st = connect(authDenied).createStatement()
+        val rs = st.executeQuery("""pragma "main".table_info("_cf_KV")""")
+        assertFalse(rs.next()) // empty, not an error
+        // a non-PRAGMA auth failure must still surface
+        assertFailsWith<SQLException> { st.executeQuery("SELECT * FROM secret") }
+    }
+
+    @Test
     fun pragmaDatabaseListIsSynthesizedWithoutCallingWrangler() {
         // D1 blocks PRAGMA database_list; the driver answers it locally with "main".
         val neverCalled = object : Transport {

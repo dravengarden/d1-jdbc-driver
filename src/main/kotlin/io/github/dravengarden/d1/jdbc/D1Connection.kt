@@ -52,11 +52,20 @@ public class D1Connection internal constructor(
         return try {
             engine.query(sql)
         } catch (e: SQLException) {
-            throw e
+            if (authDeniedPragma(sql, e.message)) QueryResult(emptyList(), emptyList()) else throw e
         } catch (e: Exception) {
-            throw SQLException(e.message ?: e.toString())
+            if (authDeniedPragma(sql, e.message)) QueryResult(emptyList(), emptyList()) else throw SQLException(e.message ?: e.toString())
         }
     }
+
+    /**
+     * D1's remote authorizer denies `PRAGMA` on its internal tables (`_cf_*`),
+     * returning SQLITE_AUTH. A client (DataGrip) introspects every table including
+     * those, so without this a single denial aborts the whole schema sweep. Scoped
+     * to PRAGMA so a genuine auth failure on a user query still surfaces.
+     */
+    private fun authDeniedPragma(sql: String, message: String?): Boolean =
+        message?.contains("SQLITE_AUTH") == true && sql.trimStart().startsWith("pragma", ignoreCase = true)
 
     /** The client-side write guardrail: refuse to send SQL above the granted [access]. */
     private fun requireAccess(sql: String) {
