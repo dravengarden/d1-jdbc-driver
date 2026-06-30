@@ -3,6 +3,7 @@ package io.github.dravengarden.d1.jdbc
 import io.github.dravengarden.d1.core.D1Config
 import io.github.dravengarden.d1.core.Wrangler
 import io.github.dravengarden.d1.model.QueryResult
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import java.sql.Connection
 import java.sql.DatabaseMetaData
@@ -58,16 +59,44 @@ public class D1Connection internal constructor(
     internal fun introspect(sql: String): QueryResult =
         if (config.cacheIntrospection) introspectionCache.getOrPut(sql) { execute(sql) } else execute(sql)
 
-    /** Results for statements D1 rejects but a SQLite client expects (schema list). */
-    private fun synthetic(sql: String): QueryResult? =
-        when (sql.trim().trimEnd(';').lowercase()) {
-            "pragma database_list" ->
-                QueryResult(
-                    columns = listOf("seq", "name", "file"),
-                    rows = listOf(listOf(JsonPrimitive(0), JsonPrimitive("main"), JsonPrimitive(""))),
-                )
+    /**
+     * Answers for the no-arg informational PRAGMAs a SQLite client (DataGrip)
+     * runs while introspecting but D1 rejects (exit 1) — `database_list`,
+     * `collation_list`, `function_list`, `module_list`, `compile_options`,
+     * `encoding`, `pragma_list`. Returning a sane synthetic result keeps schema
+     * introspection from aborting. Arg-taking PRAGMAs (`table_info`, `index_list`,
+     * …) work on D1 and fall through to wrangler.
+     */
+    private fun synthetic(sql: String): QueryResult? {
+        val spec = sql.trim().trimEnd(';').trim()
+        if (!spec.startsWith("pragma ", ignoreCase = true)) return null
+        // Strip "pragma ", any args, and an optional schema qualifier (`main.`).
+        val name = spec.substring(7).substringBefore('(').substringAfterLast('.').trim().trim('"').lowercase()
+        return when (name) {
+            "database_list" -> qr(listOf("seq", "name", "file"), listOf(listOf(0, "main", "")))
+            "collation_list" -> qr(listOf("seq", "name"), listOf(listOf(0, "BINARY"), listOf(1, "NOCASE"), listOf(2, "RTRIM")))
+            "encoding" -> qr(listOf("encoding"), listOf(listOf("UTF-8")))
+            "function_list" -> qr(listOf("name", "builtin", "type", "enc", "narg", "flags"), emptyList())
+            "module_list", "pragma_list" -> qr(listOf("name"), emptyList())
+            "compile_options" -> qr(listOf("compile_options"), emptyList())
             else -> null
         }
+    }
+
+    private fun qr(columns: List<String>, rows: List<List<Any?>>): QueryResult =
+        QueryResult(
+            columns,
+            rows.map { row ->
+                row.map { v ->
+                    when (v) {
+                        null -> JsonNull
+                        is Int -> JsonPrimitive(v)
+                        is String -> JsonPrimitive(v)
+                        else -> JsonPrimitive(v.toString())
+                    }
+                }
+            },
+        )
 
     internal fun invalidateIntrospection() {
         introspectionCache.clear()

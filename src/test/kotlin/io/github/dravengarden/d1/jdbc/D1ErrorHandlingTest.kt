@@ -59,4 +59,24 @@ class D1ErrorHandlingTest {
         assertEquals("main", rs.getString("name"))
         assertFalse(rs.next())
     }
+
+    @Test
+    fun d1BlockedInfoPragmasAreSynthesizedNotSentToWrangler() {
+        // Throws on any wrangler call; a synthesized PRAGMA must not reach it.
+        val neverCalled = object : Transport {
+            override fun run(command: List<String>, workingDir: String?): String =
+                throw RuntimeException("wrangler should not be invoked for: ${command.last()}")
+        }
+        val st = connect(neverCalled).createStatement()
+        // All the no-arg informational PRAGMAs D1 rejects must be answered locally.
+        for (p in listOf(
+            "PRAGMA collation_list", "PRAGMA function_list", "PRAGMA module_list",
+            "PRAGMA compile_options", "PRAGMA encoding", "PRAGMA pragma_list",
+            "pragma database_list;", "PRAGMA main.database_list",
+        )) {
+            st.executeQuery(p).close() // must not throw / must not hit the transport
+        }
+        // Arg-taking PRAGMAs still go to wrangler (here, the throwing transport).
+        assertFailsWith<SQLException> { st.executeQuery("PRAGMA table_info('accounts')") }
+    }
 }
