@@ -71,4 +71,12 @@ class D1ConfigTest {
         val props = Properties().apply { setProperty("readonly", "true") }
         assertEquals(true, D1Config.parse("jdbc:d1:?db=x", props).readOnly)
     }
+
+    @Test
+    fun apiTokenComesFromPasswordPropertyOnly() {
+        val props = Properties().apply { setProperty("password", "cf-token-123") }
+        assertEquals("cf-token-123", D1Config.parse("jdbc:d1:?db=x&mode=remote", props).apiToken)
+        // A token in the URL is NOT picked up — secrets never travel in the URL.
+        assertEquals(null, D1Config.parse("jdbc:d1:?db=x&password=in-url", Properties()).apiToken)
+    }
 }

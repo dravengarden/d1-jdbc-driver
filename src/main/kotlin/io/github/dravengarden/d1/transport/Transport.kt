@@ -20,10 +20,18 @@ public class TransportException(message: String) : RuntimeException(message)
 
 private const val DEFAULT_TIMEOUT_SECONDS = 120L
 
-private fun exec(argv: List<String>, workingDir: String?, timeoutSeconds: Long): String {
+private fun exec(
+    argv: List<String>,
+    workingDir: String?,
+    timeoutSeconds: Long,
+    environment: Map<String, String> = emptyMap(),
+): String {
     val process =
         ProcessBuilder(argv)
-            .apply { workingDir?.let { directory(File(it)) } }
+            .apply {
+                workingDir?.let { directory(File(it)) }
+                if (environment.isNotEmpty()) environment().putAll(environment)
+            }
             .redirectErrorStream(false)
             .start()
     val stdout = process.inputStream.bufferedReader().readText()
@@ -38,12 +46,17 @@ private fun exec(argv: List<String>, workingDir: String?, timeoutSeconds: Long):
     return stdout
 }
 
-/** Runs `wrangler` on the same machine as the driver (DataGrip's host). */
+/**
+ * Runs `wrangler` on the same machine as the driver (DataGrip's host).
+ * [environment] is merged into the child process env — used to pass
+ * `CLOUDFLARE_API_TOKEN` for `mode=remote` without putting it on the command line.
+ */
 public class LocalTransport(
     private val timeoutSeconds: Long = DEFAULT_TIMEOUT_SECONDS,
+    private val environment: Map<String, String> = emptyMap(),
 ) : Transport {
     override fun run(command: List<String>, workingDir: String?): String =
-        exec(command, workingDir, timeoutSeconds)
+        exec(command, workingDir, timeoutSeconds, environment)
 }
 
 /**

@@ -44,10 +44,22 @@ public data class D1Config(
     val readOnly: Boolean = false,
     /** Whether schema introspection is cached per connection (default true). */
     val cacheIntrospection: Boolean = true,
+    /**
+     * Cloudflare API token for `mode=remote`, taken from the JDBC `password`
+     * property — never from the URL. Injected into the local wrangler process
+     * env as `CLOUDFLARE_API_TOKEN`. Ignored for `transport=ssh` (the token must
+     * live on the server, e.g. its `.env`), since forwarding a secret over the
+     * ssh command line is unsafe.
+     */
+    val apiToken: String? = null,
 ) {
     public fun toTransport(): Transport =
         when (transport) {
-            TransportKind.NORMAL -> LocalTransport(timeoutSeconds)
+            TransportKind.NORMAL ->
+                LocalTransport(
+                    timeoutSeconds = timeoutSeconds,
+                    environment = apiToken?.let { mapOf("CLOUDFLARE_API_TOKEN" to it) } ?: emptyMap(),
+                )
             TransportKind.SSH ->
                 SshTransport(
                     host = requireNotNull(sshHost) { "transport=ssh requires host=" },
@@ -111,6 +123,8 @@ public data class D1Config(
                 probe = flag("probe", default = true),
                 readOnly = flag("readonly", default = false),
                 cacheIntrospection = flag("cache", default = true),
+                // Token comes ONLY from the password property, never the URL.
+                apiToken = props.getProperty("password")?.takeIf { it.isNotEmpty() },
             )
         }
 
