@@ -9,6 +9,9 @@ import java.sql.ResultSet
 import java.sql.RowIdLifetime
 import java.sql.Types
 
+/** SQLite's implicit single schema; D1 exposes nothing else. */
+private const val SCHEMA = "main"
+
 /**
  * Schema introspection for D1, backed by SQLite's own catalog: `sqlite_master`
  * and the `PRAGMA table_info / index_list / index_info` family, run through the
@@ -17,9 +20,12 @@ import java.sql.Types
  * many capability predicates return SQLite-appropriate constants instead of
  * throwing — a client calls dozens of them while opening a connection.
  *
- * D1 has no catalogs or schemas, so those columns are always NULL and the
- * `*Pattern`/`catalog`/`schema` arguments are ignored except for table-name
- * filtering.
+ * D1 has no catalogs, so `TABLE_CAT` is always NULL. It has one implicit schema,
+ * [SCHEMA] (`main`) — reported by `getSchemas()` and stamped on every table —
+ * because `PRAGMA database_list` (what a generic client uses to enumerate schemas)
+ * is blocked by D1, and a client needs a schema node to introspect under. The
+ * `*Pattern`/`catalog`/`schema` arguments are otherwise ignored except for
+ * table-name filtering.
  */
 public class D1DatabaseMetaData(
     private val connection: D1Connection,
@@ -354,7 +360,11 @@ public class D1DatabaseMetaData(
     override fun getCatalogs(): ResultSet = metaResultSet(listOf("TABLE_CAT"), emptyList())
 
     override fun getSchemas(): ResultSet =
-        metaResultSet(listOf("TABLE_SCHEM", "TABLE_CATALOG"), emptyList())
+        // D1 blocks `PRAGMA database_list`, so we synthesize SQLite's implicit
+        // single schema "main" here. A generic JDBC client (DataGrip) needs a
+        // schema node to introspect under, and every table reports schema "main"
+        // (cf. `PRAGMA table_list`), so the tables below are tagged to match.
+        metaResultSet(listOf("TABLE_SCHEM", "TABLE_CATALOG"), listOf(listOf(SCHEMA, null)))
 
     override fun getSchemas(catalog: String?, schemaPattern: String?): ResultSet = getSchemas()
 
@@ -381,7 +391,7 @@ public class D1DatabaseMetaData(
             val name = q.text(row, "name") ?: continue
             val jdbcType = if (q.text(row, "type") == "view") "VIEW" else "TABLE"
             if (wanted != null && jdbcType !in wanted) continue
-            rows += listOf(null, null, name, jdbcType, null, null, null, null, null, null)
+            rows += listOf(null, SCHEMA, name, jdbcType, null, null, null, null, null, null)
         }
         return metaResultSet(
             listOf(
@@ -409,7 +419,7 @@ public class D1DatabaseMetaData(
                 val nullable = if (notNull) DatabaseMetaData.columnNoNulls else DatabaseMetaData.columnNullable
                 val ordinal = (info.text(row, "cid")?.toIntOrNull() ?: 0) + 1
                 rows += listOf(
-                    null, null, table, colName,
+                    null, SCHEMA, table, colName,
                     sqliteTypeToJdbc(declared), declared.ifEmpty { "TEXT" },
                     0, null, null, 10,
                     nullable, null, info.text(row, "dflt_value"), null, null, null,
@@ -438,7 +448,7 @@ public class D1DatabaseMetaData(
             for (row in info.rows) {
                 val pk = info.text(row, "pk")?.toIntOrNull() ?: 0
                 if (pk <= 0) continue
-                rows += listOf(null, null, table, info.text(row, "name"), pk.toShort(), null)
+                rows += listOf(null, SCHEMA, table, info.text(row, "name"), pk.toShort(), null)
             }
             rows.sortBy { it[4] as Short }
         }
@@ -466,7 +476,7 @@ public class D1DatabaseMetaData(
                 for (colRow in cols.rows) {
                     val seq = (cols.text(colRow, "seqno")?.toIntOrNull() ?: 0) + 1
                     rows += listOf(
-                        null, null, table, !isUnique, null, indexName,
+                        null, SCHEMA, table, !isUnique, null, indexName,
                         DatabaseMetaData.tableIndexOther.toShort(), seq.toShort(),
                         cols.text(colRow, "name"), "A", 0, 0, null,
                     )

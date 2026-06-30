@@ -8,6 +8,7 @@ import io.github.dravengarden.d1.transport.Transport
 import java.sql.Types
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -80,6 +81,19 @@ class D1DatabaseMetaDataTest {
         assertTrue(rs.next())
         assertEquals("email", rs.getString("COLUMN_NAME"))
         assertEquals("YES", rs.getString("IS_NULLABLE"))
+    }
+
+    @Test
+    fun reportsSingleMainSchemaAndTagsTables() {
+        val md = metaData()
+        val schemas = md.getSchemas()
+        assertTrue(schemas.next())
+        assertEquals("main", schemas.getString("TABLE_SCHEM"))
+        assertFalse(schemas.next())
+        // tables are stamped with that schema so a client can introspect under it
+        val tables = md.getTables(null, null, null, null)
+        assertTrue(tables.next())
+        assertEquals("main", tables.getString("TABLE_SCHEM"))
     }
 
     @Test
