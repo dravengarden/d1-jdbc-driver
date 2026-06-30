@@ -65,12 +65,18 @@ src/test/kotlin/...                                     (unit tests)
 jdbc:d1:?transport=<normal|ssh>&host=<sshHost>&dir=<remoteDir>&db=<name>&mode=<local|remote>&env=<env>&config=<path>&persist=<dir>&wrangler=<command>
 ```
 
-- **One URL carries everything.** SSH auth is **not** in the URL — it is
-  delegated to the OS `ssh` client + `~/.ssh/config` (keys, known_hosts,
-  ControlMaster).
+- **One URL carries everything.** Full param list + defaults live in `README.md`.
+  Besides the core params above: `ssh` / `ssh-opts` (ssh command + extra args),
+  `timeout` (per-command seconds), `probe` (skip the connect-time `SELECT 1`),
+  `readonly` (reject writes), `cache` (toggle introspection cache). Every value
+  may also arrive as a JDBC property; only `db` is required. Booleans accept
+  `true/false/1/0/yes/no/on/off`.
+- **No secrets in the URL.** SSH auth is delegated to the OS `ssh` client +
+  `~/.ssh/config` (keys, known_hosts, ControlMaster); `ssh-opts` is for non-secret
+  flags only (port, jump host, identity *path*).
 - DataGrip's **User / Password** arrive as JDBC properties. Intended use:
   `password` = a Cloudflare API token for `--remote` in `normal` mode (DataGrip
-  stores it in the OS keychain). Proxy-to-hawk needs no credential in DataGrip.
+  stores it in the OS keychain). Proxy needs no credential in DataGrip.
 
 ## Transport: two modes
 

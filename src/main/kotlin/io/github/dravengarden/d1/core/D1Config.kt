@@ -32,18 +32,34 @@ public data class D1Config(
     val wranglerCommand: List<String>,
     /** `--persist-to` for local mode (miniflare state dir, e.g. `.wrangler/state`). */
     val persistTo: String? = null,
+    /** The ssh command for `transport=ssh`, token-split (default `["ssh"]`). */
+    val sshCommand: List<String> = listOf("ssh"),
+    /** Extra non-secret ssh args inserted before the host, e.g. `["-p", "2222"]`. */
+    val sshOptions: List<String> = emptyList(),
+    /** Per-command wrangler timeout in seconds (default 120). */
+    val timeoutSeconds: Long = DEFAULT_TIMEOUT_SECONDS,
+    /** Whether `connect()` runs a `SELECT 1` connectivity probe (default true). */
+    val probe: Boolean = true,
+    /** Whether the connection rejects writes (default false). */
+    val readOnly: Boolean = false,
+    /** Whether schema introspection is cached per connection (default true). */
+    val cacheIntrospection: Boolean = true,
 ) {
     public fun toTransport(): Transport =
         when (transport) {
-            TransportKind.NORMAL -> LocalTransport()
+            TransportKind.NORMAL -> LocalTransport(timeoutSeconds)
             TransportKind.SSH ->
                 SshTransport(
                     host = requireNotNull(sshHost) { "transport=ssh requires host=" },
+                    sshCommand = sshCommand,
+                    sshOptions = sshOptions,
+                    timeoutSeconds = timeoutSeconds,
                 )
         }
 
     public companion object {
         public const val URL_PREFIX: String = "jdbc:d1:"
+        public const val DEFAULT_TIMEOUT_SECONDS: Long = 120
 
         public fun parse(url: String, props: Properties): D1Config {
             require(url.startsWith(URL_PREFIX)) { "not a d1 url: $url" }
@@ -51,6 +67,14 @@ public data class D1Config(
             val params = parseQuery(query)
 
             fun value(key: String): String? = params[key] ?: props.getProperty(key)
+            fun tokens(key: String): List<String> = value(key)?.trim()?.split(Regex("\\s+"))?.filter { it.isNotEmpty() } ?: emptyList()
+            fun flag(key: String, default: Boolean): Boolean =
+                when (value(key)?.lowercase()) {
+                    null -> default
+                    "true", "1", "yes", "on" -> true
+                    "false", "0", "no", "off" -> false
+                    else -> error("invalid boolean for $key= (expected true|false)")
+                }
 
             val transport =
                 when (val t = value("transport")?.lowercase() ?: "normal") {
@@ -64,7 +88,12 @@ public data class D1Config(
                     "remote" -> Mode.REMOTE
                     else -> error("unknown mode: $m (expected local|remote)")
                 }
-            val wrangler = (value("wrangler") ?: "wrangler").trim().split(" ").filter { it.isNotEmpty() }
+            val wrangler = tokens("wrangler").ifEmpty { listOf("wrangler") }
+            val sshCommand = tokens("ssh").ifEmpty { listOf("ssh") }
+            val timeout =
+                value("timeout")?.let {
+                    it.toLongOrNull()?.takeIf { n -> n > 0 } ?: error("invalid timeout= (expected positive seconds)")
+                } ?: DEFAULT_TIMEOUT_SECONDS
 
             return D1Config(
                 transport = transport,
@@ -76,6 +105,12 @@ public data class D1Config(
                 configPath = value("config"),
                 wranglerCommand = wrangler,
                 persistTo = value("persist"),
+                sshCommand = sshCommand,
+                sshOptions = tokens("ssh-opts"),
+                timeoutSeconds = timeout,
+                probe = flag("probe", default = true),
+                readOnly = flag("readonly", default = false),
+                cacheIntrospection = flag("cache", default = true),
             )
         }
 

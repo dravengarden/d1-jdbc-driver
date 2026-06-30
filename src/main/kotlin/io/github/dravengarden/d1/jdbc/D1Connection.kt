@@ -25,6 +25,7 @@ public class D1Connection internal constructor(
 
     private var closed = false
     private var autoCommit = true
+    private var readOnly = config.readOnly
 
     /**
      * Per-connection cache for schema-introspection queries. DataGrip issues the
@@ -34,10 +35,16 @@ public class D1Connection internal constructor(
      */
     private val introspectionCache = HashMap<String, QueryResult>()
 
-    internal fun introspect(sql: String): QueryResult = introspectionCache.getOrPut(sql) { wrangler.execute(sql) }
+    internal fun introspect(sql: String): QueryResult =
+        if (config.cacheIntrospection) introspectionCache.getOrPut(sql) { wrangler.execute(sql) } else wrangler.execute(sql)
 
     internal fun invalidateIntrospection() {
         introspectionCache.clear()
+    }
+
+    /** Guard a write path: a read-only connection rejects it before touching wrangler. */
+    internal fun requireWritable() {
+        if (readOnly) throw SQLException("connection is read-only")
     }
 
     /** Run `SELECT 1` so a misconfigured URL / unreachable backend fails at connect. */
@@ -125,10 +132,10 @@ public class D1Connection internal constructor(
     override fun isClosed(): Boolean = closed
 
     override fun setReadOnly(readOnly: Boolean) {
-        // Accepted but not enforced — writes are simply not implemented yet.
+        this.readOnly = readOnly
     }
 
-    override fun isReadOnly(): Boolean = false
+    override fun isReadOnly(): Boolean = readOnly
 
     override fun setCatalog(catalog: String?) {
         // D1 has no catalog concept.

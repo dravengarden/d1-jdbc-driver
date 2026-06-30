@@ -33,7 +33,9 @@ public class D1Statement(
     }
 
     override fun executeUpdate(sql: String?): Int {
-        val result = wrangler.execute(require(sql))
+        val text = require(sql)
+        connection.requireWritable()
+        val result = wrangler.execute(text)
         connection.invalidateIntrospection()
         current = null
         updateCount = result.changes.toInt()
@@ -47,6 +49,7 @@ public class D1Statement(
             updateCount = -1
             true
         } else {
+            connection.requireWritable()
             val result = wrangler.execute(text)
             connection.invalidateIntrospection()
             current = null

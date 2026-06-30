@@ -18,9 +18,9 @@ public interface Transport {
 
 public class TransportException(message: String) : RuntimeException(message)
 
-private const val TIMEOUT_SECONDS = 120L
+private const val DEFAULT_TIMEOUT_SECONDS = 120L
 
-private fun exec(argv: List<String>, workingDir: String?): String {
+private fun exec(argv: List<String>, workingDir: String?, timeoutSeconds: Long): String {
     val process =
         ProcessBuilder(argv)
             .apply { workingDir?.let { directory(File(it)) } }
@@ -28,9 +28,9 @@ private fun exec(argv: List<String>, workingDir: String?): String {
             .start()
     val stdout = process.inputStream.bufferedReader().readText()
     val stderr = process.errorStream.bufferedReader().readText()
-    if (!process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+    if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
         process.destroyForcibly()
-        throw TransportException("command timed out after ${TIMEOUT_SECONDS}s: ${argv.joinToString(" ")}")
+        throw TransportException("command timed out after ${timeoutSeconds}s: ${argv.joinToString(" ")}")
     }
     if (process.exitValue() != 0) {
         throw TransportException("command failed (exit ${process.exitValue()}): ${argv.joinToString(" ")}\n$stderr")
@@ -39,21 +39,28 @@ private fun exec(argv: List<String>, workingDir: String?): String {
 }
 
 /** Runs `wrangler` on the same machine as the driver (DataGrip's host). */
-public class LocalTransport : Transport {
-    override fun run(command: List<String>, workingDir: String?): String = exec(command, workingDir)
+public class LocalTransport(
+    private val timeoutSeconds: Long = DEFAULT_TIMEOUT_SECONDS,
+) : Transport {
+    override fun run(command: List<String>, workingDir: String?): String =
+        exec(command, workingDir, timeoutSeconds)
 }
 
 /**
- * Runs `wrangler` on a remote host over SSH (e.g. hawk). Authentication is
- * delegated entirely to the OS `ssh` client + `~/.ssh/config` (keys, known_hosts,
- * ControlMaster) — no secrets here.
+ * Runs `wrangler` on a remote host over SSH (e.g. a dev server). Authentication
+ * is delegated entirely to the OS `ssh` client + `~/.ssh/config` (keys,
+ * known_hosts, ControlMaster) — no secrets here. [sshCommand] (default `ssh`) and
+ * [sshOptions] (e.g. `-p 2222`) let callers point at a different ssh / port /
+ * jump host without putting any credential in the URL.
  */
 public class SshTransport(
     private val host: String,
+    private val sshCommand: List<String> = listOf("ssh"),
     private val sshOptions: List<String> = emptyList(),
+    private val timeoutSeconds: Long = DEFAULT_TIMEOUT_SECONDS,
 ) : Transport {
     override fun run(command: List<String>, workingDir: String?): String =
-        exec(listOf("ssh") + sshOptions + listOf(host, remoteCommand(command, workingDir)), workingDir = null)
+        exec(sshCommand + sshOptions + listOf(host, remoteCommand(command, workingDir)), workingDir = null, timeoutSeconds)
 
     /** The single shell string sent to the remote: `cd <dir> && <argv…>`, quoted. */
     internal fun remoteCommand(command: List<String>, workingDir: String?): String =

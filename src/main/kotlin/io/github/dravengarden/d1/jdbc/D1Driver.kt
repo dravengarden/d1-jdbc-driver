@@ -27,10 +27,12 @@ public class D1Driver : Driver {
         // connection it cannot validate as dead.
         val config = D1Config.parse(url!!, info ?: Properties())
         val connection = D1Connection(config)
-        try {
-            connection.checkConnectivity()
-        } catch (e: Exception) {
-            throw SQLException("failed to reach d1 (db=${config.database}): ${e.message}", e)
+        if (config.probe) {
+            try {
+                connection.checkConnectivity()
+            } catch (e: Exception) {
+                throw SQLException("failed to reach d1 (db=${config.database}): ${e.message}", e)
+            }
         }
         return connection
     }

@@ -42,7 +42,9 @@ public class D1PreparedStatement(
     }
 
     override fun executeUpdate(): Int {
-        val result = wrangler.execute(bound())
+        val text = bound()
+        connection.requireWritable()
+        val result = wrangler.execute(text)
         connection.invalidateIntrospection()
         current = null
         updateCount = result.changes.toInt()
@@ -56,6 +58,7 @@ public class D1PreparedStatement(
             updateCount = -1
             true
         } else {
+            connection.requireWritable()
             val result = wrangler.execute(text)
             connection.invalidateIntrospection()
             current = null

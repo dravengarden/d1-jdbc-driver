@@ -6,6 +6,7 @@ import java.util.Properties
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -36,6 +37,16 @@ class D1DriverTest {
         val url = "jdbc:d1:?db=kuaitu-local&transport=normal&wrangler=${"/bin/false"}"
         val e = assertFailsWith<SQLException> { driver.connect(url, Properties()) }
         assertTrue(e.message!!.contains("kuaitu-local"), "message should name the db: ${e.message}")
+    }
+
+    @Test
+    fun probeFalseSkipsConnectivityCheck() {
+        // Bogus wrangler that would fail a SELECT 1 — but probe=false means connect()
+        // must not run the probe, so opening the connection succeeds anyway.
+        val url = "jdbc:d1:?db=x&transport=normal&wrangler=${"/bin/false"}&probe=false"
+        val c = driver.connect(url, Properties())
+        assertNotNull(c)
+        c.close()
     }
 
     @Test

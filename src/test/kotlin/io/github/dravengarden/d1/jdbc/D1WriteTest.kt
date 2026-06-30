@@ -7,6 +7,7 @@ import io.github.dravengarden.d1.core.Wrangler
 import io.github.dravengarden.d1.transport.Transport
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 
@@ -21,7 +22,7 @@ class D1WriteTest {
         }
     }
 
-    private fun connect(transport: Transport): D1Connection {
+    private fun connect(transport: Transport, readOnly: Boolean = false): D1Connection {
         val config =
             D1Config(
                 transport = TransportKind.NORMAL,
@@ -32,6 +33,7 @@ class D1WriteTest {
                 env = null,
                 configPath = null,
                 wranglerCommand = listOf("wrangler"),
+                readOnly = readOnly,
             )
         return D1Connection(config, Wrangler(transport, config))
     }
@@ -55,5 +57,14 @@ class D1WriteTest {
         val ps = connect(WriteTransport()).prepareStatement("DELETE FROM accounts WHERE id = ?")
         ps.setString(1, "x")
         assertEquals(3, ps.executeUpdate())
+    }
+
+    @Test
+    fun readOnlyConnectionRejectsWritesBeforeRunningWrangler() {
+        val transport = WriteTransport()
+        val st = connect(transport, readOnly = true).createStatement()
+        assertFailsWith<java.sql.SQLException> { st.executeUpdate("DELETE FROM accounts") }
+        assertFailsWith<java.sql.SQLException> { st.execute("INSERT INTO accounts(id) VALUES ('x')") }
+        assertEquals(0, transport.calls, "no wrangler call should happen for a rejected write")
     }
 }

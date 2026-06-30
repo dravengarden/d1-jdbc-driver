@@ -34,4 +34,41 @@ class D1ConfigTest {
     fun missingDbFails() {
         assertFailsWith<IllegalArgumentException> { D1Config.parse("jdbc:d1:?mode=local", Properties()) }
     }
+
+    @Test
+    fun defaultsForOptionalParams() {
+        val c = D1Config.parse("jdbc:d1:?db=x", Properties())
+        assertEquals(listOf("ssh"), c.sshCommand)
+        assertEquals(emptyList(), c.sshOptions)
+        assertEquals(120L, c.timeoutSeconds)
+        assertEquals(true, c.probe)
+        assertEquals(false, c.readOnly)
+        assertEquals(true, c.cacheIntrospection)
+    }
+
+    @Test
+    fun parsesAllTunableParams() {
+        val url =
+            "jdbc:d1:?db=x&ssh=ssh%20-F%20/tmp/cfg&ssh-opts=-p%202222%20-o%20ConnectTimeout=5" +
+                "&timeout=30&probe=false&readonly=true&cache=off"
+        val c = D1Config.parse(url, Properties())
+        assertEquals(listOf("ssh", "-F", "/tmp/cfg"), c.sshCommand)
+        assertEquals(listOf("-p", "2222", "-o", "ConnectTimeout=5"), c.sshOptions)
+        assertEquals(30L, c.timeoutSeconds)
+        assertEquals(false, c.probe)
+        assertEquals(true, c.readOnly)
+        assertEquals(false, c.cacheIntrospection)
+    }
+
+    @Test
+    fun rejectsBadBooleanAndTimeout() {
+        assertFailsWith<IllegalStateException> { D1Config.parse("jdbc:d1:?db=x&probe=maybe", Properties()) }
+        assertFailsWith<IllegalStateException> { D1Config.parse("jdbc:d1:?db=x&timeout=0", Properties()) }
+    }
+
+    @Test
+    fun propertiesProvideValuesToo() {
+        val props = Properties().apply { setProperty("readonly", "true") }
+        assertEquals(true, D1Config.parse("jdbc:d1:?db=x", props).readOnly)
+    }
 }

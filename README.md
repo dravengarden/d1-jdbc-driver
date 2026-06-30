@@ -56,17 +56,26 @@ jdbc:d1:?transport=ssh&host=hawk&dir=/path/to/project&db=mydb-local&mode=local&c
 jdbc:d1:?db=mydb-production&mode=remote&env=production            # transport defaults to normal
 ```
 
-| param | meaning |
-|---|---|
-| `transport` | `normal` (run wrangler locally) or `ssh` / `proxy` (run it on `host`) |
-| `host` | SSH target for proxy mode (`user@ip` or a `~/.ssh/config` alias) |
-| `dir` | working directory where wrangler runs (the project root) |
-| `db` | D1 database name |
-| `mode` | `local` (miniflare) or `remote` (cloud) |
-| `env` | wrangler named environment (e.g. `production`) |
-| `config` | path to `wrangler.jsonc` |
-| `persist` | `--persist-to` dir for `mode=local` (e.g. `.wrangler/state`) |
-| `wrangler` | the wrangler command, token-split (default `wrangler`) |
+Everything is configured here; values may also be passed as JDBC properties
+(e.g. DataGrip's advanced tab). `db` is the only required one.
+
+| param | default | meaning |
+|---|---|---|
+| `db` | — (required) | D1 database name |
+| `transport` | `normal` | `normal` (run wrangler locally) or `ssh` / `proxy` (run it on `host`) |
+| `mode` | `local` | `local` (miniflare) or `remote` (cloud) |
+| `host` | — | SSH target for proxy mode (`user@ip` or a `~/.ssh/config` alias) |
+| `dir` | — | working directory where wrangler runs (the project root) |
+| `env` | — | wrangler named environment (e.g. `production`) |
+| `config` | — | path to `wrangler.jsonc` |
+| `persist` | — | `--persist-to` dir for `mode=local` (e.g. `.wrangler/state`) |
+| `wrangler` | `wrangler` | the wrangler command, token-split (e.g. `pnpm exec wrangler`) |
+| `ssh` | `ssh` | the ssh command for `transport=ssh`, token-split |
+| `ssh-opts` | — | extra non-secret ssh args, token-split (e.g. `-p 2222 -o ProxyJump=bastion`) |
+| `timeout` | `120` | per-command wrangler timeout, seconds |
+| `probe` | `true` | run a `SELECT 1` connectivity check on connect |
+| `readonly` | `false` | reject all writes on this connection |
+| `cache` | `true` | cache schema introspection per connection |
 
 ### Two transport modes
 

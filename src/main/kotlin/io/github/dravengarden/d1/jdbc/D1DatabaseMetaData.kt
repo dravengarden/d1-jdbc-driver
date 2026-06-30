@@ -49,7 +49,7 @@ public class D1DatabaseMetaData(
 
     override fun getUserName(): String = ""
 
-    override fun isReadOnly(): Boolean = false
+    override fun isReadOnly(): Boolean = connection.isReadOnly
 
     override fun getDatabaseProductName(): String = "SQLite"
 
