@@ -34,7 +34,7 @@ class D1DriverTest {
     fun connectSurfacesBackendFailureAsSqlException() {
         // `transport=normal` with a wrangler command that always fails makes the
         // SELECT 1 connectivity probe throw — connect() must wrap it, not leak it.
-        val url = "jdbc:d1:?db=kuaitu-local&transport=normal&wrangler=${"/bin/false"}"
+        val url = "jdbc:d1:?db=kuaitu-local&transport=normal&wrangler=${"false"}"
         val e = assertFailsWith<SQLException> { driver.connect(url, Properties()) }
         assertTrue(e.message!!.contains("kuaitu-local"), "message should name the db: ${e.message}")
     }
@@ -43,7 +43,7 @@ class D1DriverTest {
     fun probeFalseSkipsConnectivityCheck() {
         // Bogus wrangler that would fail a SELECT 1 — but probe=false means connect()
         // must not run the probe, so opening the connection succeeds anyway.
-        val url = "jdbc:d1:?db=x&transport=normal&wrangler=${"/bin/false"}&probe=false"
+        val url = "jdbc:d1:?db=x&transport=normal&wrangler=${"false"}&probe=false"
         val c = driver.connect(url, Properties())
         assertNotNull(c)
         c.close()

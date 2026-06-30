@@ -32,7 +32,6 @@ public class D1Statement(
 
     override fun executeUpdate(sql: String?): Int {
         val text = require(sql)
-        connection.requireWritable()
         val result = connection.execute(text)
         connection.invalidateIntrospection()
         current = null
@@ -47,7 +46,6 @@ public class D1Statement(
             updateCount = -1
             true
         } else {
-            connection.requireWritable()
             val result = connection.execute(text)
             connection.invalidateIntrospection()
             current = null

@@ -70,11 +70,17 @@ jdbc:d1:?transport=<normal|ssh>&host=<sshHost>&dir=<remoteDir>&db=<name>&mode=<l
 ```
 
 - **One URL carries everything.** Full param list + defaults live in `README.md`.
-  Besides the core params above: `ssh` / `ssh-opts` (ssh command + extra args),
-  `timeout` (per-command seconds), `probe` (skip the connect-time `SELECT 1`),
-  `readonly` (reject writes), `cache` (toggle introspection cache). Every value
-  may also arrive as a JDBC property; only `db` is required. Booleans accept
-  `true/false/1/0/yes/no/on/off`.
+  Besides the core params above: `engine` (auto/wrangler/sqlite/http) + its
+  `sqlite`/`file`/`account`/`database-id`/`env-file`/`token-var`; `ssh` /
+  `ssh-opts`; `timeout`; `probe` (connect-time CLI preflight + `SELECT 1`);
+  `access` (`read`/`write`/`ddl` guardrail, **default read**); `cache`. Every
+  value may also arrive as a JDBC property; only `db` is required.
+- **Access guardrail** (`D1Connection.requireAccess` + `classifyStatement`):
+  read-only by default, client-side only — it refuses to *send* over-privileged
+  SQL, it is NOT a server-side boundary (use a scoped CF token for that).
+- **Preflight** (`Engine.checkAvailable` → `requireTool`): on connect, checks the
+  engine's CLI is on the host's PATH and distinguishes "tool missing" from "host
+  unreachable" with actionable English messages.
 - **No secrets in the URL.** SSH auth is delegated to the OS `ssh` client +
   `~/.ssh/config` (keys, known_hosts, ControlMaster); `ssh-opts` is for non-secret
   flags only (port, jump host, identity *path*).

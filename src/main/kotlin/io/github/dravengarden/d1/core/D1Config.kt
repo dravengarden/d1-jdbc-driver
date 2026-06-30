@@ -18,6 +18,14 @@ public enum class TransportKind { NORMAL, SSH }
 public enum class EngineKind { AUTO, WRANGLER, SQLITE, HTTP }
 
 /**
+ * Client-side write guardrail, increasing. [READ] (the default) allows only
+ * SELECT/PRAGMA; [WRITE] adds DML (INSERT/UPDATE/DELETE); [DDL] adds schema
+ * changes (CREATE/ALTER/DROP/…). It refuses to *send* over-privileged SQL — it
+ * is not a server-side boundary (use a read-only Cloudflare token for that).
+ */
+public enum class Access { READ, WRITE, DDL }
+
+/**
  * Everything needed to run a D1 query, parsed from a single JDBC URL of the form
  *
  * ```
@@ -46,8 +54,8 @@ public data class D1Config(
     val timeoutSeconds: Long = DEFAULT_TIMEOUT_SECONDS,
     /** Whether `connect()` runs a `SELECT 1` connectivity probe (default true). */
     val probe: Boolean = true,
-    /** Whether the connection rejects writes (default false). */
-    val readOnly: Boolean = false,
+    /** Write guardrail level (default [Access.READ] — writes must be opted into). */
+    val access: Access = Access.READ,
     /** Whether schema introspection is cached per connection (default true). */
     val cacheIntrospection: Boolean = true,
     /**
@@ -180,7 +188,7 @@ public data class D1Config(
                 sshOptions = tokens("ssh-opts"),
                 timeoutSeconds = timeout,
                 probe = flag("probe", default = true),
-                readOnly = flag("readonly", default = false),
+                access = parseAccess(value("access"), value("readonly")),
                 cacheIntrospection = flag("cache", default = true),
                 // Token comes ONLY from the password property, never the URL.
                 apiToken = props.getProperty("password")?.takeIf { it.isNotEmpty() },
@@ -192,6 +200,26 @@ public data class D1Config(
                 httpEnvFile = value("env-file") ?: ".env",
                 httpTokenVar = value("token-var") ?: "CLOUDFLARE_API_TOKEN",
             )
+        }
+
+        /** `access=read|write|ddl` (with aliases); falls back to the legacy `readonly=` flag. */
+        private fun parseAccess(access: String?, readonly: String?): Access {
+            access?.lowercase()?.let {
+                return when (it) {
+                    "read", "ro", "readonly" -> Access.READ
+                    "write", "rw" -> Access.WRITE
+                    "ddl", "full", "admin" -> Access.DDL
+                    else -> error("unknown access: $it (expected read|write|ddl)")
+                }
+            }
+            readonly?.lowercase()?.let {
+                return when (it) {
+                    "true", "1", "yes", "on" -> Access.READ
+                    "false", "0", "no", "off" -> Access.WRITE
+                    else -> error("invalid boolean for readonly= (expected true|false)")
+                }
+            }
+            return Access.READ
         }
 
         private fun parseQuery(query: String): Map<String, String> =

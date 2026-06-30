@@ -36,6 +36,7 @@ class IntrospectionCacheTest {
             env = null,
             configPath = null,
             wranglerCommand = listOf("wrangler"),
+            access = io.github.dravengarden.d1.core.Access.WRITE, // the cache test issues an UPDATE
         ).let { D1Connection(it, Wrangler(transport, it)) }
 
     @Test

@@ -41,7 +41,6 @@ public class D1PreparedStatement(
 
     override fun executeUpdate(): Int {
         val text = bound()
-        connection.requireWritable()
         val result = connection.execute(text)
         connection.invalidateIntrospection()
         current = null
@@ -56,7 +55,6 @@ public class D1PreparedStatement(
             updateCount = -1
             true
         } else {
-            connection.requireWritable()
             val result = connection.execute(text)
             connection.invalidateIntrospection()
             current = null

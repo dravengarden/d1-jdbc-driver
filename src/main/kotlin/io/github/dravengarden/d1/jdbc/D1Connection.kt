@@ -1,5 +1,6 @@
 package io.github.dravengarden.d1.jdbc
 
+import io.github.dravengarden.d1.core.Access
 import io.github.dravengarden.d1.core.D1Config
 import io.github.dravengarden.d1.core.Engine
 import io.github.dravengarden.d1.model.QueryResult
@@ -27,7 +28,7 @@ public class D1Connection internal constructor(
 
     private var closed = false
     private var autoCommit = true
-    private var readOnly = config.readOnly
+    private var access = config.access
 
     /**
      * Per-connection cache for schema-introspection queries. DataGrip issues the
@@ -46,9 +47,43 @@ public class D1Connection internal constructor(
      * client needs (e.g. `PRAGMA database_list`) with a synthetic result.
      */
     internal fun execute(sql: String): QueryResult {
+        requireAccess(sql)
         synthetic(sql)?.let { return it }
         return try {
             engine.query(sql)
+        } catch (e: SQLException) {
+            throw e
+        } catch (e: Exception) {
+            throw SQLException(e.message ?: e.toString())
+        }
+    }
+
+    /** The client-side write guardrail: refuse to send SQL above the granted [access]. */
+    private fun requireAccess(sql: String) {
+        val need = classifyStatement(sql)
+        val allowed =
+            when (access) {
+                Access.READ -> need == StatementClass.READ
+                Access.WRITE -> need != StatementClass.DDL
+                Access.DDL -> true
+            }
+        if (!allowed) {
+            val message =
+                if (need == StatementClass.DDL) {
+                    "Schema changes (DDL) are not allowed on this connection (access=${access.name.lowercase()}). " +
+                        "Add 'access=ddl' to the JDBC URL to enable them."
+                } else {
+                    "This connection is read-only (access=read). Add 'access=write' to the JDBC URL to modify " +
+                        "data, or 'access=ddl' to also change the schema."
+                }
+            throw SQLException(message)
+        }
+    }
+
+    /** Verify the engine's CLI is present (clear error before the first query). */
+    internal fun preflight() {
+        try {
+            engine.checkAvailable()
         } catch (e: SQLException) {
             throw e
         } catch (e: Exception) {
@@ -100,11 +135,6 @@ public class D1Connection internal constructor(
 
     internal fun invalidateIntrospection() {
         introspectionCache.clear()
-    }
-
-    /** Guard a write path: a read-only connection rejects it before touching wrangler. */
-    internal fun requireWritable() {
-        if (readOnly) throw SQLException("connection is read-only")
     }
 
     /** Run `SELECT 1` so a misconfigured URL / unreachable backend fails at connect. */
@@ -192,10 +222,11 @@ public class D1Connection internal constructor(
     override fun isClosed(): Boolean = closed
 
     override fun setReadOnly(readOnly: Boolean) {
-        this.readOnly = readOnly
+        // JDBC's coarse toggle maps onto the access ladder: read vs (at least) write.
+        access = if (readOnly) Access.READ else maxOf(access, Access.WRITE)
     }
 
-    override fun isReadOnly(): Boolean = readOnly
+    override fun isReadOnly(): Boolean = access == Access.READ
 
     override fun setCatalog(catalog: String?) {
         // D1 has no catalog concept.

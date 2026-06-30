@@ -36,6 +36,8 @@ public class HttpEngine(
     private val url =
         "https://api.cloudflare.com/client/v4/accounts/$accountId/d1/database/$databaseId/query"
 
+    override fun checkAvailable(): Unit = requireTool(transport, workingDir, "curl", null)
+
     override fun query(sql: String): QueryResult {
         // JsonObject.toString() is valid, correctly-escaped JSON: {"sql":"…"}.
         val body = JsonObject(mapOf("sql" to JsonPrimitive(sql))).toString()

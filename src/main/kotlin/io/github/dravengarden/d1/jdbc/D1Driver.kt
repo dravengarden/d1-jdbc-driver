@@ -28,6 +28,10 @@ public class D1Driver : Driver {
         val config = D1Config.parse(url!!, info ?: Properties())
         val connection = D1Connection(config)
         if (config.probe) {
+            // Check the engine's CLI first, so a missing dependency gives a clear
+            // message ("'sqlite3' not found on SSH host 'hawk' …") instead of an
+            // opaque failure from the SELECT 1 probe below.
+            connection.preflight()
             try {
                 connection.checkConnectivity()
             } catch (e: Exception) {

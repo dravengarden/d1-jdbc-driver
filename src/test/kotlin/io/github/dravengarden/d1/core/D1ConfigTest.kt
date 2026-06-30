@@ -42,7 +42,7 @@ class D1ConfigTest {
         assertEquals(emptyList(), c.sshOptions)
         assertEquals(120L, c.timeoutSeconds)
         assertEquals(true, c.probe)
-        assertEquals(false, c.readOnly)
+        assertEquals(Access.READ, c.access) // writes are opt-in
         assertEquals(true, c.cacheIntrospection)
     }
 
@@ -50,14 +50,29 @@ class D1ConfigTest {
     fun parsesAllTunableParams() {
         val url =
             "jdbc:d1:?db=x&ssh=ssh%20-F%20/tmp/cfg&ssh-opts=-p%202222%20-o%20ConnectTimeout=5" +
-                "&timeout=30&probe=false&readonly=true&cache=off"
+                "&timeout=30&probe=false&access=ddl&cache=off"
         val c = D1Config.parse(url, Properties())
         assertEquals(listOf("ssh", "-F", "/tmp/cfg"), c.sshCommand)
         assertEquals(listOf("-p", "2222", "-o", "ConnectTimeout=5"), c.sshOptions)
         assertEquals(30L, c.timeoutSeconds)
         assertEquals(false, c.probe)
-        assertEquals(true, c.readOnly)
+        assertEquals(Access.DDL, c.access)
         assertEquals(false, c.cacheIntrospection)
+    }
+
+    @Test
+    fun parsesAccessLevelsWithAliasesAndLegacyReadonly() {
+        fun access(q: String) = D1Config.parse("jdbc:d1:?db=x&$q", Properties()).access
+        assertEquals(Access.READ, access("access=read"))
+        assertEquals(Access.READ, access("access=ro"))
+        assertEquals(Access.WRITE, access("access=write"))
+        assertEquals(Access.WRITE, access("access=rw"))
+        assertEquals(Access.DDL, access("access=full"))
+        assertEquals(Access.READ, access("readonly=true")) // legacy alias
+        assertEquals(Access.WRITE, access("readonly=false"))
+        // access wins over readonly
+        assertEquals(Access.DDL, access("access=ddl&readonly=true"))
+        assertFailsWith<IllegalStateException> { access("access=bogus") }
     }
 
     @Test
@@ -68,8 +83,8 @@ class D1ConfigTest {
 
     @Test
     fun propertiesProvideValuesToo() {
-        val props = Properties().apply { setProperty("readonly", "true") }
-        assertEquals(true, D1Config.parse("jdbc:d1:?db=x", props).readOnly)
+        val props = Properties().apply { setProperty("access", "write") }
+        assertEquals(Access.WRITE, D1Config.parse("jdbc:d1:?db=x", props).access)
     }
 
     @Test

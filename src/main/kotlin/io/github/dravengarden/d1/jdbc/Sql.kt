@@ -22,6 +22,35 @@ internal fun looksLikeQuery(sql: String): Boolean {
     return keyword in setOf("SELECT", "PRAGMA", "WITH", "EXPLAIN", "VALUES")
 }
 
+/** What a statement does, for the access guardrail. Increasing privilege. */
+internal enum class StatementClass { READ, DML, DDL }
+
+private val DML_KEYWORDS = setOf("INSERT", "UPDATE", "DELETE", "REPLACE", "UPSERT")
+private val DDL_KEYWORDS = setOf("CREATE", "DROP", "ALTER", "REINDEX", "VACUUM", "ANALYZE", "TRUNCATE", "ATTACH", "DETACH")
+private val DML_WORD = Regex("\\b(INSERT|UPDATE|DELETE|REPLACE)\\b", RegexOption.IGNORE_CASE)
+private val DDL_WORD = Regex("\\b(CREATE|DROP|ALTER)\\b", RegexOption.IGNORE_CASE)
+
+/**
+ * Classify [sql] by its leading keyword. A `WITH …` CTE is scanned for a write
+ * verb (it may wrap an INSERT/UPDATE/DELETE). Anything unrecognised is treated as
+ * a write — the guardrail errs toward blocking, never toward leaking a write.
+ */
+internal fun classifyStatement(sql: String): StatementClass {
+    val s = sql.trimStart()
+    return when (s.takeWhile { !it.isWhitespace() && it != '(' }.uppercase()) {
+        "SELECT", "PRAGMA", "EXPLAIN", "VALUES" -> StatementClass.READ
+        in DDL_KEYWORDS -> StatementClass.DDL
+        in DML_KEYWORDS -> StatementClass.DML
+        "WITH" ->
+            when {
+                DDL_WORD.containsMatchIn(s) -> StatementClass.DDL
+                DML_WORD.containsMatchIn(s) -> StatementClass.DML
+                else -> StatementClass.READ
+            }
+        else -> StatementClass.DML
+    }
+}
+
 /** Render a bound JDBC value as the SQL literal that replaces its `?`. */
 internal fun sqlLiteralOf(value: Any?): String =
     when (value) {

@@ -31,6 +31,8 @@ public class SqliteEngine(
 ) : Engine {
     private var resolved: String? = file
 
+    override fun checkAvailable(): Unit = requireTool(transport, workingDir, sqliteCommand.first(), "sqlite")
+
     override fun query(sql: String): QueryResult {
         val target = resolved ?: resolveFile().also { resolved = it }
         // -readonly: never block / corrupt a running `wrangler dev` writer.

@@ -14,6 +14,9 @@ public interface Transport {
      * Throws [TransportException] on a non-zero exit, including stderr.
      */
     public fun run(command: List<String>, workingDir: String?): String
+
+    /** Human-readable host for error messages (e.g. `SSH host 'hawk'`). */
+    public val description: String get() = "the engine host"
 }
 
 public class TransportException(message: String) : RuntimeException(message)
@@ -55,6 +58,8 @@ public class LocalTransport(
     private val timeoutSeconds: Long = DEFAULT_TIMEOUT_SECONDS,
     private val environment: Map<String, String> = emptyMap(),
 ) : Transport {
+    override val description: String = "this machine"
+
     override fun run(command: List<String>, workingDir: String?): String =
         exec(command, workingDir, timeoutSeconds, environment)
 }
@@ -72,6 +77,8 @@ public class SshTransport(
     private val sshOptions: List<String> = emptyList(),
     private val timeoutSeconds: Long = DEFAULT_TIMEOUT_SECONDS,
 ) : Transport {
+    override val description: String = "SSH host '$host'"
+
     override fun run(command: List<String>, workingDir: String?): String =
         exec(sshCommand + sshOptions + listOf(host, remoteCommand(command, workingDir)), workingDir = null, timeoutSeconds)
 

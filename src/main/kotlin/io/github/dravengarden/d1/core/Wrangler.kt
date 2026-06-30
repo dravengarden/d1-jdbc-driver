@@ -18,6 +18,9 @@ public class Wrangler(
 ) : Engine {
     override fun query(sql: String): QueryResult = parse(transport.run(buildArgs(sql), config.workingDir))
 
+    override fun checkAvailable(): Unit =
+        requireTool(transport, config.workingDir, config.wranglerCommand.first(), "wrangler")
+
     internal fun buildArgs(sql: String): List<String> =
         buildList {
             addAll(config.wranglerCommand)

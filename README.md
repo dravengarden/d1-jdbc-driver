@@ -28,6 +28,7 @@ Shadow (fat JAR), JUnit 5. Builds on a Nix flake dev shell.
 - [Quick start](#quick-start)
 - [Engines](#engines) — wrangler / sqlite / http, and the engine × transport matrix
 - [Connection URL reference](#connection-url-reference)
+- [Access & permissions](#access--permissions) — read / write / ddl
 - [Recipes](#recipes) — local / remote / proxy / read-only / multi-DB / SSH options
 - [Use in DataGrip](#use-in-datagrip)
 - [Use in DBeaver / other JDBC clients](#use-in-dbeaver--other-jdbc-clients)
@@ -92,6 +93,10 @@ So for the common **proxy + fast local** setup, the remote host needs just
 external on purpose (a Node CLI / SQLite build must match the environment, and
 the JAR stays tiny and dependency-free). Everything else travels in the URL;
 nothing project-specific is installed on the host.
+
+On connect the driver **preflights** the engine's CLI on its host and tells you
+exactly what's missing (e.g. *"engine needs 'sqlite3' on SSH host 'hawk' …"*)
+rather than failing opaquely later. Disable with `probe=false`.
 
 ---
 
@@ -183,8 +188,8 @@ jdbc:d1:?db=<name>&mode=<local|remote>&transport=<normal|ssh>&...
 | `ssh` | `ssh` | the ssh command for `transport=ssh`, token-split |
 | `ssh-opts` | — | extra non-secret ssh args, token-split (e.g. `-p 2222 -o ProxyJump=bastion`) |
 | `timeout` | `120` | per-command timeout, in seconds |
-| `probe` | `true` | run a `SELECT 1` connectivity check on connect |
-| `readonly` | `false` | reject all writes on this connection |
+| `probe` | `true` | on connect, check the engine's CLI is present + run `SELECT 1` |
+| `access` | `read` | write guardrail: `read` / `write` / `ddl` — see [Access](#access--permissions) |
 | `cache` | `true` | cache schema introspection per connection |
 
 Notes:
@@ -198,6 +203,39 @@ Notes:
 - **No secrets in the URL.** SSH keys/passphrase stay in `~/.ssh/config` + agent;
   the Cloudflare token stays in the project `.env` or the `password` property
   (see [Authentication](#authentication)).
+
+---
+
+## Access & permissions
+
+A connection's `access` level is a **write guardrail** — three increasing tiers,
+**read by default** (writes must be opted into):
+
+| `access` | allows | aliases |
+|---|---|---|
+| `read` *(default)* | `SELECT` / `PRAGMA` / `EXPLAIN` | `ro`, `readonly` |
+| `write` | + `INSERT` / `UPDATE` / `DELETE` (DML) | `rw` |
+| `ddl` | + `CREATE` / `ALTER` / `DROP` … (schema) | `full` |
+
+```
+…                       # read-only — safe for browsing prod
+…&access=write          # edit rows
+…&access=ddl            # change schema / run migrations
+```
+
+Statements are classified by leading keyword (a `WITH …` CTE is scanned for a
+write verb); anything ambiguous is treated as a write. A blocked statement gives
+a clear message, e.g. *"This connection is read-only (access=read). Add
+'access=write' …"*.
+
+> **It's a guardrail, not a security boundary.** The driver refuses to *send*
+> over-privileged SQL, but your Cloudflare token may still have write access. For
+> hard enforcement, use a **read-only Cloudflare API token** (D1 Read scope) —
+> that's enforced server-side. The two compose: the guardrail stops slips, the
+> scoped token stops everything.
+>
+> Note: `engine=sqlite` is always read-only at the engine level regardless of
+> `access`; local writes need `engine=wrangler`.
 
 ---
 
@@ -261,14 +299,15 @@ jdbc:d1:?transport=ssh&host=devbox&db=mydb&mode=remote&account=<acct>&database-i
 `host` is whatever `ssh <host>` resolves to (an alias from `~/.ssh/config` is
 ideal — see the [multiplexing tip](#use-in-datagrip)).
 
-### Read-only browsing of production
+### Browsing production (read-only is the default)
 
 ```
-jdbc:d1:?db=mydb&mode=remote&env=production&dir=/srv/project&config=wrangler.jsonc&readonly=true
+jdbc:d1:?db=mydb&mode=remote&account=<acct>&database-id=<uuid>&dir=/srv/project
 ```
 
-`readonly=true` makes the connection reject every `executeUpdate` / write
-`execute` **before** it reaches wrangler — a safety net when poking at prod.
+No `access=` needed — connections are **read-only by default**. Writes are
+rejected before reaching the backend; opt in per connection with `access=write`
+(data) or `access=ddl` (schema). See [Access](#access--permissions).
 
 ### Project-local wrangler (no global install)
 
@@ -454,12 +493,14 @@ The token is never written to the URL or logged by the driver.
 | Symptom | Cause | Fix |
 |---|---|---|
 | `no such table: X` (local) | `persist=` missing or wrong; a different default DB was opened | point `persist=` at the dir holding `.wrangler/state` that your `wrangler dev` uses |
-| `sqlite3: not found` (engine=sqlite) | `sqlite3` not on the engine host's PATH | install `sqlite3` on that host (or point `sqlite=` at it); for `proxy` it's the **remote** host's non-interactive ssh PATH |
+| `…engine needs 'X' on SSH host '…', but it is not on PATH there` | the engine's CLI (sqlite3 / curl / wrangler) is missing on the host | install it on that host, or point the matching param (`sqlite=` / `wrangler=`) at an absolute path |
+| `SSH host '…' is unreachable or refused the connection` | ssh can't reach/auth the host | check the alias, key-based auth (`ssh <host> true`), and `known_hosts` |
 | `no local D1 SQLite file under …` | `wrangler dev`/migrations haven't created the local DB yet, or `persist=` is wrong | run the app once locally; verify `persist=` |
-| `readonly database` | writing through `engine=sqlite` | add `&engine=wrangler` for writes |
+| `readonly database` | writing through `engine=sqlite` (always read-only) | add `&engine=wrangler` for local writes |
 | `command failed (exit 127)` / `wrangler: not found` | wrangler not on the PATH of the machine running it | set `wrangler=` (e.g. `pnpm exec wrangler` or an absolute path), or install wrangler globally; for `proxy`, ensure it's on the server's non-interactive ssh PATH |
 | remote: `Authentication error` / 403 | no/invalid Cloudflare API token | put `CLOUDFLARE_API_TOKEN` in the project `.env`, or pass it as the `password` property |
-| `connection is read-only` | `readonly=true` is set | remove it, or call `setReadOnly(false)` on the connection |
+| `This connection is read-only (access=read)` | writes need an explicit access level | add `access=write` (data) or `access=ddl` (schema) to the URL |
+| `Schema changes (DDL) are not allowed (access=write)` | `DROP`/`CREATE`/`ALTER` need the top tier | add `access=ddl` to the URL |
 | proxy: `Host key verification failed` / `Permission denied (publickey)` | ssh can't verify the host or auth non-interactively | fix `~/.ssh/config` + `known_hosts` + key/agent; confirm with `ssh <host> true` |
 | `command timed out after 120s` | slow query or cold start | raise `timeout=<seconds>` |
 | `executeUpdate` returns `0` on a local write (`engine=wrangler`) | expected — local wrangler omits the change count | the write **did** apply; use `mode=remote` if you need the count |

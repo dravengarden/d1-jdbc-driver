@@ -1,5 +1,6 @@
 package io.github.dravengarden.d1.jdbc
 
+import io.github.dravengarden.d1.core.Access
 import io.github.dravengarden.d1.core.D1Config
 import io.github.dravengarden.d1.core.Mode
 import io.github.dravengarden.d1.core.TransportKind
@@ -10,6 +11,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class D1WriteTest {
     /** Replays a canned write `meta` (changes/last_row_id) for any non-query SQL. */
@@ -22,7 +24,7 @@ class D1WriteTest {
         }
     }
 
-    private fun connect(transport: Transport, readOnly: Boolean = false): D1Connection {
+    private fun connect(transport: Transport, access: Access = Access.WRITE): D1Connection {
         val config =
             D1Config(
                 transport = TransportKind.NORMAL,
@@ -33,7 +35,7 @@ class D1WriteTest {
                 env = null,
                 configPath = null,
                 wranglerCommand = listOf("wrangler"),
-                readOnly = readOnly,
+                access = access,
             )
         return D1Connection(config, Wrangler(transport, config))
     }
@@ -60,11 +62,24 @@ class D1WriteTest {
     }
 
     @Test
-    fun readOnlyConnectionRejectsWritesBeforeRunningWrangler() {
+    fun readAccessRejectsWritesBeforeTouchingTheEngine() {
         val transport = WriteTransport()
-        val st = connect(transport, readOnly = true).createStatement()
+        val st = connect(transport, access = Access.READ).createStatement()
         assertFailsWith<java.sql.SQLException> { st.executeUpdate("DELETE FROM accounts") }
         assertFailsWith<java.sql.SQLException> { st.execute("INSERT INTO accounts(id) VALUES ('x')") }
-        assertEquals(0, transport.calls, "no wrangler call should happen for a rejected write")
+        assertEquals(0, transport.calls, "no engine call should happen for a rejected write")
+    }
+
+    @Test
+    fun writeAccessStillRejectsDdl() {
+        val transport = WriteTransport()
+        val st = connect(transport, access = Access.WRITE).createStatement()
+        // DML is allowed at write level...
+        st.executeUpdate("UPDATE accounts SET email_verified = 1")
+        assertEquals(1, transport.calls)
+        // ...but a schema change needs access=ddl.
+        val e = assertFailsWith<java.sql.SQLException> { st.executeUpdate("DROP TABLE accounts") }
+        assertTrue(e.message!!.contains("access=ddl"))
+        assertEquals(1, transport.calls, "rejected DDL must not reach the engine")
     }
 }
