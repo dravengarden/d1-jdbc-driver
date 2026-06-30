@@ -36,12 +36,24 @@ a fake transport with canned `wrangler --json` payloads.
 
 ## Task 2 — wrangler wrapper + proxy/SSH verification
 
+- **DONE — `normal` transport / `mode=local`, verified live against the kuaitu
+  local D1** (`kuaitu-local`, persist `kuaitu/main/.wrangler/state`,
+  `wrangler=pnpm exec wrangler`). Through the real `java.sql.*` API
+  (DriverManager SPI auto-load → `Connection.isValid` → `DatabaseMetaData`
+  `getTables`/`getColumns`/`getPrimaryKeys`/`getIndexInfo` → `Statement` SELECT
+  → bound `PreparedStatement`): all correct, including TEXT→VARCHAR /
+  INTEGER→BIGINT mapping and `notnull`→nullability.
 - Add a `d1q` wrapper on hawk: PATH-resolved, resolves node + wrangler without
   entering the project dev shell (avoid the banner that pollutes stdout), sources
   only the CF token for `--remote`, keeps stdout clean. The driver then calls
-  `ssh hawk d1q d1 execute …`.
+  `ssh hawk d1q d1 execute …`. (Open: where it lives — kuaitu scripts vs hawk
+  `/etc/nixos`; it is kuaitu-config-specific.)
 - Verify the `proxy` (SSH) transport end-to-end against the hawk-local D1.
-- Verify `mode=remote` against the real Cloudflare D1.
+  (Open: needs an `ssh` host alias that lands back on hawk with the project on
+  PATH.)
+- Verify `mode=remote` against the real Cloudflare D1. (Open: needs a CF API
+  token and a real remote `database_id` — `kuaitu-preview` is still a
+  placeholder in `wrangler.jsonc`.)
 - Document the recommended Mac `~/.ssh/config` Host entry with `ControlMaster` +
   `ControlPersist`.
 

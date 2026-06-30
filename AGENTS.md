@@ -131,5 +131,8 @@ Task 1 — the `java.sql.*` connection layer (`D1Connection`, `D1Statement`,
 `D1PreparedStatement`, `D1ResultSet`, `D1ResultSetMetaData`,
 `D1DatabaseMetaData`, all delegating to the wrangler core) — is **implemented
 and green** (27 unit tests, fat JAR builds). `D1Driver.connect` opens a
-connection after a `SELECT 1` probe. Remaining work (live proxy/remote
-verification, DataGrip wiring, write support, perf) is in **`TASKS.md`**.
+connection after a `SELECT 1` probe. **Live-verified** end-to-end against the
+real kuaitu local D1 via the `normal` transport (DriverManager →
+DatabaseMetaData introspection → Statement/PreparedStatement). Remaining work
+(SSH-proxy + remote verification, `d1q` wrapper, DataGrip wiring, write
+support, perf) is in **`TASKS.md`**.
