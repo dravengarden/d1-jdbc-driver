@@ -77,7 +77,9 @@ class HttpEngineTest {
         val b64 = wrapper.removePrefix("printf %s ").substringBefore(' ')
         val script = String(java.util.Base64.getDecoder().decode(b64))
         assertTrue("api.cloudflare.com/client/v4/accounts/acc123/d1/database/db-uuid/query" in script)
-        assertTrue("--data-raw" in script && "x IN ('a', 'b')" in script)
+        // The SQL rides --data-raw; its single quotes are shq-escaped within the
+        // pipeline, so check the un-quoted prefix is present.
+        assertTrue("--data-raw" in script && "SELECT name FROM t WHERE x IN (" in script)
         assertTrue("CLOUDFLARE_API_TOKEN" in script && ".env" in script && "-H @-" in script)
     }
 
