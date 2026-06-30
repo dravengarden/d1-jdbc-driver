@@ -25,8 +25,9 @@ Usable. The **`java.sql.*` layer is implemented and tested** (37 unit tests) and
 **live-verified** end-to-end against a real D1 — both the local miniflare DB
 (`mode=local`) and the cloud DB (`mode=remote`) — through DriverManager →
 `DatabaseMetaData` introspection → `Statement` / `PreparedStatement`, including
-INSERT/UPDATE/DELETE writes. Remaining work (live SSH-proxy verification from a
-Mac, DataGrip walkthrough, perf) is in [`TASKS.md`](TASKS.md).
+INSERT/UPDATE/DELETE writes. The remaining checks are Mac-side only: a live
+SSH-proxy run and the DataGrip GUI walkthrough (the introspection path itself is
+already verified programmatically).
 
 Two known wrangler-imposed limits: a per-query `wrangler` spawn is ~1 s (cached
 for schema introspection); and `mode=local` wrangler does not report a row-change

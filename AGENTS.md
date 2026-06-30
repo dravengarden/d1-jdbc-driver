@@ -1,7 +1,7 @@
 # AGENTS.md — d1-jdbc-driver
 
 Working guide for coding agents. See `README.md` for the project overview and
-`TASKS.md` for the remaining work.
+usage.
 
 ## What this is
 
@@ -147,5 +147,5 @@ Also done: write support (`executeUpdate`), per-connection introspection
 caching, the `scripts/d1q` SSH-proxy wrapper, and GitHub Actions CI. The only
 unverified link is the literal Mac→hawk `ssh` hop of the `proxy` transport (its
 command construction is unit-tested; `d1q` is verified as a drop-in). Optional
-deferred items (persistent hawk-side query helper, direct D1 HTTP API for
-`mode=remote`) remain in **`TASKS.md`**.
+deferred ideas: a persistent hawk-side query helper (kill the ~1 s per-query
+node startup) and a direct D1 HTTP API path for `mode=remote`.
