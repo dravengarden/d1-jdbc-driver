@@ -61,7 +61,6 @@ Three orthogonal axes, all set in the URL:
   - `sqlite` — read the local miniflare SQLite file directly (no Node; ~ms vs
     ~1.5 s). `mode=local` only.
   - `http` — the Cloudflare D1 REST API directly (no Node). `mode=remote` only.
-    *(planned — not wired yet.)*
   - `auto` (default) — local → `sqlite` when a file is resolvable, else `wrangler`.
 - **transport** — *where* that engine runs: `normal` (this machine) or
   `ssh`/`proxy` (a remote host over SSH).
@@ -86,7 +85,7 @@ shells out to** — plus `sshd` for proxy:
 |---|---|---|
 | `wrangler` | **`wrangler`** on PATH (or point `wrangler=` at it) — a Node CLI | local + remote |
 | `sqlite` | **`sqlite3`** on PATH (or point `sqlite=` at it) | local only |
-| `http` *(planned)* | **`curl`** on PATH (or nothing, if the JVM calls it directly) | remote only |
+| `http` | **`curl`** on PATH | remote only |
 
 So for the common **proxy + fast local** setup, the remote host needs just
 **`sqlite3` + `sshd`**. None of these tools is bundled in the JAR — they're
@@ -127,7 +126,7 @@ a remote host over SSH:
 |---|---|---|
 | **wrangler** | wrangler here | wrangler on the remote |
 | **sqlite** (local only) | read the file here | read the file on the remote |
-| **http** (remote only, *planned*) | this machine → Cloudflare | curl on the remote → Cloudflare |
+| **http** (remote only) | this machine → Cloudflare | curl on the remote → Cloudflare |
 
 - **`wrangler`** — the portable default. Works for `local` and `remote`, matches
   the project's wrangler config/state exactly. Cost: each query is a ~1.5 s Node
@@ -138,11 +137,15 @@ a remote host over SSH:
   committed writes. Writes aren't supported on this engine — use
   `engine=wrangler` for those. The file is auto-resolved under
   `<persist>/v3/d1/…`, or set `file=`.
-- **`http`** (`mode=remote`, *planned*) — call the Cloudflare D1 REST API
-  directly, no Node. With `transport=ssh` the request egresses from the remote
-  host (useful when its network path to Cloudflare is better than the client's).
-- **`auto`** (default) — `mode=local` with a resolvable file → `sqlite`,
-  otherwise `wrangler`.
+- **`http`** (`mode=remote`) — call the Cloudflare D1 REST API directly via
+  `curl`, no Node (~2× faster than `wrangler --remote`, and it returns real
+  row-change counts). Needs `account=` + `database-id=`. With `transport=ssh` the
+  request egresses from the remote host (useful when its path to Cloudflare beats
+  the client's). The token is read fresh from the host's env file (so rotation is
+  picked up) and piped to curl — never on the command line — or supplied via the
+  JDBC `password`.
+- **`auto`** (default) — `mode=local` with a resolvable file → `sqlite`;
+  `mode=remote` with `account=` + `database-id=` → `http`; otherwise `wrangler`.
 
 **Pick by editing the URL**, e.g. `&engine=sqlite` or `&engine=wrangler`. The
 matrix is just `engine=…` × `transport=…`; the [recipes](#recipes) below show the
@@ -173,6 +176,10 @@ jdbc:d1:?db=<name>&mode=<local|remote>&transport=<normal|ssh>&...
 | `wrangler` | `wrangler` | the wrangler command, token-split (e.g. `pnpm exec wrangler`) |
 | `sqlite` | `sqlite3` | the sqlite3 command for `engine=sqlite`, token-split |
 | `file` | — | explicit `.sqlite` path for `engine=sqlite` (else auto-resolved from `persist`) |
+| `account` | — | Cloudflare account id for `engine=http` |
+| `database-id` | — | D1 database **id** (UUID) for `engine=http` — not the `db` name |
+| `env-file` | `.env` | file (under `dir`) the http engine reads the token from |
+| `token-var` | `CLOUDFLARE_API_TOKEN` | env-var name holding the token in `env-file` |
 | `ssh` | `ssh` | the ssh command for `transport=ssh`, token-split |
 | `ssh-opts` | — | extra non-secret ssh args, token-split (e.g. `-p 2222 -o ProxyJump=bastion`) |
 | `timeout` | `120` | per-command timeout, in seconds |
@@ -217,14 +224,27 @@ jdbc:d1:?transport=ssh&host=devbox&db=mydb-local&mode=local&persist=/srv/project
 ~ms per query instead of ~1.5 s. The remote box needs **`sqlite3` + `sshd`**
 (no Node). Read-only; for writes add `&engine=wrangler`.
 
-### Remote (cloud) D1
+### Remote (cloud) D1 — via wrangler
 
 ```
-jdbc:d1:?db=mydb&mode=remote&env=production&dir=/path/to/project&config=wrangler.jsonc
+jdbc:d1:?db=mydb&mode=remote&engine=wrangler&env=production&dir=/path/to/project&config=wrangler.jsonc
 ```
 
 Needs a Cloudflare API token (see [Authentication](#authentication)). Drop
 `env=` if the database is declared at the top level of `wrangler.jsonc`.
+
+### Remote (cloud) D1 — via the D1 HTTP API (faster, no Node)
+
+```
+jdbc:d1:?db=mydb&mode=remote&account=<account-id>&database-id=<db-uuid>&dir=/path/to/project
+```
+
+`engine=auto` → `http`: a direct `curl` to the D1 REST API. `account` and
+`database-id` come from `wrangler.jsonc` / the Cloudflare dashboard. The token is
+read from `dir/.env` (`CLOUDFLARE_API_TOKEN`), or pass it as the JDBC `password`.
+Add `transport=ssh&host=devbox` to make the request **egress from `devbox`**
+instead of this machine (then `dir`/`.env` are on `devbox`); that host needs only
+`curl` + `sshd`.
 
 ### Proxy — D1 lives on a remote dev server
 
@@ -234,8 +254,8 @@ wrangler runs on the server; this machine needs only `ssh`.
 # the server's LOCAL miniflare DB
 jdbc:d1:?transport=ssh&host=devbox&db=mydb-local&mode=local&dir=/srv/project&config=wrangler.jsonc&persist=.wrangler/state
 
-# the cloud DB, but wrangler (and the token) live on the server
-jdbc:d1:?transport=ssh&host=devbox&db=mydb&mode=remote&dir=/srv/project&config=wrangler.jsonc
+# the cloud DB — request egresses from the server (engine=http via curl on devbox)
+jdbc:d1:?transport=ssh&host=devbox&db=mydb&mode=remote&account=<acct>&database-id=<uuid>&dir=/srv/project
 ```
 
 `host` is whatever `ssh <host>` resolves to (an alias from `~/.ssh/config` is
@@ -353,16 +373,15 @@ try (Connection c = DriverManager.getConnection(
 ## Authentication
 
 - **`mode=local`** — no credentials. It's an on-disk SQLite file via miniflare.
-- **`mode=remote`** — needs a **Cloudflare API token** with D1 access. Two ways
-  to supply it:
-  - The JDBC **`password`** property (DataGrip's *Password* field). Your client
-    keeps it in its own secret store (DataGrip → OS keychain); the driver injects
-    it as `CLOUDFLARE_API_TOKEN` into the local wrangler process — never the URL,
-    never the command line. **`transport=normal` only.**
-  - `CLOUDFLARE_API_TOKEN` in the environment wrangler runs in — e.g. the
-    project's `.env`, which wrangler auto-loads when run from `dir`. This is the
-    way for **`proxy`** (the token stays on the server; the driver does not forward
-    a secret over ssh).
+- **`mode=remote`** — needs a **Cloudflare API token** with D1 access. Either:
+  - **An env file on the host** — `CLOUDFLARE_API_TOKEN` in `dir/.env` (override
+    with `env-file=` / `token-var=`). `engine=http` reads it **fresh per query**
+    (so a rotated token is picked up) and pipes it to curl — never on the command
+    line; `engine=wrangler` has wrangler auto-load it. This keeps the token on the
+    host, which is the way for **`proxy`**.
+  - **The JDBC `password` property** (DataGrip's *Password* field) — kept in the
+    client's secret store, never in the URL. Used by `engine=http` directly, and
+    injected as `CLOUDFLARE_API_TOKEN` into a local `engine=wrangler` process.
 - **SSH (`proxy`)** — fully delegated to the OS `ssh` client: keys, `known_hosts`,
   agent, and `~/.ssh/config`. The driver puts **no** credential in the URL;
   `ssh-opts` is for non-secret flags only.
@@ -406,9 +425,9 @@ The token is never written to the URL or logged by the driver.
       ControlPersist 5m
   ```
 
-- `mode=remote` still pays the network round-trip to Cloudflare per query (and,
-  with `engine=wrangler`, a Node spawn on top); the planned `engine=http` drops
-  the Node spawn.
+- `mode=remote` pays the network round-trip to Cloudflare per query.
+  `engine=http` is ~2× faster than `engine=wrangler` there (no Node spawn on top
+  of the round-trip) and returns real row-change counts.
 
 ---
 

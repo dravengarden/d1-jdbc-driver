@@ -51,7 +51,8 @@ src/main/kotlin/io/github/dravengarden/d1/
   transport/  Transport (where a command runs): LocalTransport / SshTransport
   core/       D1Config (URL parsing) + Engine (how a query runs):
               Wrangler (wrangler d1 execute), SqliteEngine (read the local
-              <hash>.sqlite directly via sqlite3). Engine × Transport are
+              <hash>.sqlite via sqlite3), HttpEngine (remote D1 REST API via
+              curl; token piped, never in argv). Engine × Transport are
               orthogonal — any engine runs local or over ssh.
   jdbc/       D1Driver + the java.sql.* layer (Connection/Statement/
               PreparedStatement/ResultSet/ResultSetMetaData/DatabaseMetaData).
@@ -154,9 +155,11 @@ real kuaitu D1 — both `mode=local` (miniflare) and `mode=remote`
 (`kuaitu-preview` on Cloudflare) — through DriverManager → DatabaseMetaData
 introspection → Statement/PreparedStatement, including INSERT/UPDATE/DELETE.
 Also done: write support (`executeUpdate`), per-connection introspection
-caching, and GitHub Actions CI. Everything is URL-driven — the `proxy` server
-side needs only `wrangler` + `sshd`, nothing project-specific. The only
-unverified link is the literal client→server `ssh` hop of the `proxy` transport
-(its command construction is unit-tested). Optional deferred ideas: a persistent
-server-side query helper (kill the ~1 s per-query node startup) and a direct D1
-HTTP API path for `mode=remote`.
+caching, and GitHub Actions CI. Everything is URL-driven — for `proxy` the host
+side needs only the engine's CLI (`wrangler` / `sqlite3` / `curl`) + `sshd`,
+nothing project-specific. Engines: `sqlite` (fast local, read-only) and `http`
+(remote D1 REST API, token piped) are both live-verified against the real
+kuaitu D1. The only unverified link is the literal client→server `ssh` hop (its
+command construction is unit-tested). Optional deferred idea: a persistent
+server-side query helper to kill the ~1 s per-query node startup for
+`engine=wrangler`.

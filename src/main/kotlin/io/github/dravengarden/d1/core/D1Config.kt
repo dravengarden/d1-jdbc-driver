@@ -64,13 +64,30 @@ public data class D1Config(
     val sqliteCommand: List<String> = listOf("sqlite3"),
     /** Explicit `.sqlite` path for [EngineKind.SQLITE]; else resolved from [persistTo]. */
     val sqliteFile: String? = null,
+    /** Cloudflare account id for [EngineKind.HTTP]. */
+    val httpAccountId: String? = null,
+    /** D1 database id (UUID) for [EngineKind.HTTP] — distinct from the [database] name. */
+    val httpDatabaseId: String? = null,
+    /** Env file the HTTP engine reads the token from on the host (default `.env`). */
+    val httpEnvFile: String = ".env",
+    /** Env var holding the Cloudflare token in [httpEnvFile] (default `CLOUDFLARE_API_TOKEN`). */
+    val httpTokenVar: String = "CLOUDFLARE_API_TOKEN",
 ) {
     /** The engine that actually runs queries, resolving [EngineKind.AUTO]. */
     public fun toEngine(): Engine {
         val transport = toTransport()
         return when (resolveEngine()) {
             EngineKind.SQLITE -> SqliteEngine(transport, sqliteCommand, workingDir, persistTo, sqliteFile)
-            EngineKind.HTTP -> error("the http engine is not implemented yet")
+            EngineKind.HTTP ->
+                HttpEngine(
+                    transport,
+                    workingDir,
+                    accountId = requireNotNull(httpAccountId) { "engine=http needs account=" },
+                    databaseId = requireNotNull(httpDatabaseId) { "engine=http needs database-id=" },
+                    explicitToken = apiToken,
+                    envFile = httpEnvFile,
+                    tokenVar = httpTokenVar,
+                )
             else -> Wrangler(transport, this)
         }
     }
@@ -78,7 +95,11 @@ public data class D1Config(
     private fun resolveEngine(): EngineKind =
         when (engine) {
             EngineKind.AUTO ->
-                if (mode == Mode.LOCAL && (persistTo != null || sqliteFile != null)) EngineKind.SQLITE else EngineKind.WRANGLER
+                when {
+                    mode == Mode.LOCAL && (persistTo != null || sqliteFile != null) -> EngineKind.SQLITE
+                    mode == Mode.REMOTE && httpAccountId != null && httpDatabaseId != null -> EngineKind.HTTP
+                    else -> EngineKind.WRANGLER
+                }
             else -> engine
         }
 
@@ -166,6 +187,10 @@ public data class D1Config(
                 engine = engine,
                 sqliteCommand = sqlite,
                 sqliteFile = value("file"),
+                httpAccountId = value("account"),
+                httpDatabaseId = value("database-id"),
+                httpEnvFile = value("env-file") ?: ".env",
+                httpTokenVar = value("token-var") ?: "CLOUDFLARE_API_TOKEN",
             )
         }
 

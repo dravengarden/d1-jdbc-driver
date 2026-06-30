@@ -87,6 +87,22 @@ class D1ConfigTest {
     }
 
     @Test
+    fun autoEnginePicksHttpForRemoteWithAccountAndDbId() {
+        val http = D1Config.parse("jdbc:d1:?db=mydb&mode=remote&account=acc&database-id=uuid", Properties())
+        assertEquals(true, http.toEngine() is HttpEngine)
+        // remote without the http ids -> wrangler (unchanged default)
+        val wr = D1Config.parse("jdbc:d1:?db=mydb&mode=remote", Properties())
+        assertEquals(true, wr.toEngine() is Wrangler)
+    }
+
+    @Test
+    fun httpEngineRequiresAccountAndDbId() {
+        assertFailsWith<IllegalArgumentException> {
+            D1Config.parse("jdbc:d1:?db=mydb&mode=remote&engine=http&account=acc", Properties()).toEngine()
+        }
+    }
+
+    @Test
     fun engineCanBeForced() {
         val c = D1Config.parse("jdbc:d1:?db=x&mode=local&persist=p&engine=wrangler", Properties())
         assertEquals(EngineKind.WRANGLER, c.engine)
