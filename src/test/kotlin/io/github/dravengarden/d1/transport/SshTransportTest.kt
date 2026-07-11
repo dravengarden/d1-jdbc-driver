@@ -29,4 +29,13 @@ class SshTransportTest {
             ssh.remoteCommand(listOf("--command", "SELECT 'x'"), null),
         )
     }
+
+    @Test
+    fun hostCannotBeParsedAsAnSshOption() {
+        val transport = SshTransport(host = "-oProxyCommand=bad")
+        assertEquals(
+            listOf("ssh", "--", "-oProxyCommand=bad", "'true'"),
+            transport.sshArgv(listOf("true"), null),
+        )
+    }
 }

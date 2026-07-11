@@ -14,8 +14,8 @@ file. A JDBC client (DataGrip, DBeaver) can then query **both** the local dev D1
 ## Stack
 
 - Kotlin 2.1 — `explicitApi()` + `allWarningsAsErrors = true`
-- Gradle (Kotlin DSL) + version catalog (`gradle/libs.versions.toml`)
-- JDK 21 toolchain
+- Checked Gradle wrapper (Kotlin DSL) + version catalog (`gradle/libs.versions.toml`)
+- JDK 21 toolchain, Java 17 bytecode/runtime floor
 - kotlinx-serialization-json (parse wrangler output)
 - Shadow plugin (one fat JAR to load into DataGrip)
 - JUnit 5 / kotlin-test
@@ -23,12 +23,12 @@ file. A JDBC client (DataGrip, DBeaver) can then query **both** the local dev D1
 
 ## Build / test / run
 
-Everything runs inside the dev shell:
+Everything runs through the checked wrapper inside the dev shell:
 
 ```
-nix develop            # provides jdk21 + gradle
-gradle build           # compile + test + fat JAR
-gradle test
+nix develop                   # provides jdk21
+./gradlew build                # compile + test + fat JAR
+./gradlew test
 ```
 
 Fat JAR: `build/libs/d1-jdbc-driver-<version>.jar` — this is what you load in
@@ -52,7 +52,7 @@ src/main/kotlin/io/github/dravengarden/d1/
   core/       D1Config (URL parsing) + Engine (how a query runs):
               Wrangler (wrangler d1 execute), SqliteEngine (read the local
               <hash>.sqlite via sqlite3), HttpEngine (remote D1 REST API via
-              curl; token piped, never in argv). Engine × Transport are
+              curl; SQL over stdin and token via a private header, never in argv). Engine × Transport are
               orthogonal — any engine runs local or over ssh.
   jdbc/       D1Driver + the java.sql.* layer (Connection/Statement/
               PreparedStatement/ResultSet/ResultSetMetaData/DatabaseMetaData).
@@ -113,6 +113,8 @@ would drift. Keep the JAR free of Node.
   explicit visibility modifier and return type; keep the build warning-free.
 - **No secrets** in code or in JDBC URLs. The CF token lives in wrangler's env
   (e.g. hawk's `.env`) or DataGrip's password store.
+- JDBC URLs are trusted configuration: executable override fields intentionally
+  launch local commands and must never come from an untrusted user.
 - Commit subject: imperative, English.
 
 ## Gotchas (already learned)
@@ -121,9 +123,8 @@ would drift. Keep the JAR free of Node.
   different default DB and reports `no such table`. The `persist=` URL param maps
   to `--persist-to`.
 - **wrangler/dotenv prints a banner to stdout** (e.g. `… loaded .env`);
-  `Wrangler.parse` slices from the first `[` so a banner does not break JSON
-  parsing. (This is why the driver needs no clean-stdout wrapper — keep config in
-  the URL, not in a server-side script.)
+  `Wrangler.parse` tries candidate JSON-array starts so even a bracketed banner
+  does not break parsing. Keep config in the URL, not in a server-side script.
 - **`Transport` is a plain interface, not sealed** — a sealed interface cannot be
   implemented from the test module.
 - A per-query `wrangler` spawn is ~1.1 s (node + miniflare startup), plus network
@@ -145,6 +146,10 @@ would drift. Keep the JAR free of Node.
   and **cleared on any write** (`invalidateIntrospection`), because DataGrip
   re-issues the same `sqlite_master`/`PRAGMA` reads dozens of times per sweep and
   each is a ~1 s spawn. User `SELECT`s are never cached.
+- **Autocommit only.** Never advertise JDBC transaction support or silently
+  accept `setAutoCommit(false)`; separate CLI invocations are not one transaction.
+- **Process execution must drain output concurrently.** Keep the bounded output,
+  real deadline, stdin writer, and descendant cleanup covered by integration tests.
 
 ## Status
 
@@ -155,16 +160,17 @@ D1.
 Task 1 — the `java.sql.*` connection layer (`D1Connection`, `D1Statement`,
 `D1PreparedStatement`, `D1ResultSet`, `D1ResultSetMetaData`,
 `D1DatabaseMetaData`, all delegating to the wrangler core) — is **implemented
-and green** (37 unit tests, fat JAR builds). `D1Driver.connect` opens a
+and green** (unit and local-process tests, fat JAR builds). `D1Driver.connect` opens a
 connection after a `SELECT 1` probe. **Live-verified** end-to-end against the
 real kuaitu D1 — both `mode=local` (miniflare) and `mode=remote`
 (`kuaitu-preview` on Cloudflare) — through DriverManager → DatabaseMetaData
 introspection → Statement/PreparedStatement, including INSERT/UPDATE/DELETE.
 Also done: write support (`executeUpdate`), per-connection introspection
-caching, and GitHub Actions CI. Everything is URL-driven — for `proxy` the host
-side needs only the engine's CLI (`wrangler` / `sqlite3` / `curl`) + `sshd`,
+caching. There is deliberately no GitHub Actions workflow; verification is local
+through the Gradle wrapper/Nix shell. Everything is URL-driven — for `proxy` the host
+side needs the engine CLI and its small POSIX helper set + `sshd`,
 nothing project-specific. Engines: `sqlite` (fast local, read-only) and `http`
-(remote D1 REST API, token piped) are both live-verified against the real
+(remote D1 REST API, token passed through a private header) are both live-verified against the real
 kuaitu D1. The only unverified link is the literal client→server `ssh` hop (its
 command construction is unit-tested). Optional deferred idea: a persistent
 server-side query helper to kill the ~1 s per-query node startup for

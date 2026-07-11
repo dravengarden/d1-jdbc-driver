@@ -9,7 +9,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
-import java.util.Base64
 
 /**
  * Queries a remote (`mode=remote`) D1 via the Cloudflare D1 REST API — no Node,
@@ -28,40 +27,47 @@ public class HttpEngine(
     private val workingDir: String?,
     accountId: String,
     databaseId: String,
-    /** Token from the JDBC `password`; null → read [tokenVar] from [envFile] on the host. */
-    private val explicitToken: String?,
-    /** Env file the host reads the token from when [explicitToken] is null (e.g. `.env`). */
+    /** Whether the local transport exposes the JDBC password through a private process env var. */
+    private val processTokenAvailable: Boolean,
+    /** Env file the host reads when no local JDBC-password process token is available. */
     private val envFile: String,
     private val tokenVar: String,
 ) : Engine {
     private val url =
         "https://api.cloudflare.com/client/v4/accounts/$accountId/d1/database/$databaseId/query"
 
-    override fun checkAvailable(): Unit = requireTool(transport, workingDir, "curl", null)
+    override fun checkAvailable() {
+        listOf("sh", "curl", "mktemp").forEach { requireTool(transport, workingDir, it, null) }
+        if (!processTokenAvailable) {
+            listOf("sed", "head", "tr").forEach { requireTool(transport, workingDir, it, null) }
+        }
+    }
 
     override fun query(sql: String): QueryResult {
         // JsonObject.toString() is valid, correctly-escaped JSON: {"sql":"…"}.
         val body = JsonObject(mapOf("sql" to JsonPrimitive(sql))).toString()
-        // The pipeline is full of single quotes (the JSON body, the SQL's own
-        // string literals). Over transport=ssh it goes through a SECOND shell-quote
-        // layer (SshTransport), which mangles those quotes and corrupts the SQL.
-        // base64 has no shell-special chars, so wrapping the script in it survives
-        // any number of shell layers; the host decodes and runs it verbatim.
-        val b64 = Base64.getEncoder().encodeToString(pipeline(body).toByteArray(Charsets.UTF_8))
-        return parse(transport.run(listOf("sh", "-c", "printf %s $b64 | base64 -d | sh"), workingDir))
+        // The body travels over stdin, never argv. The token is written to a
+        // mode-0600 temporary header file so curl also receives it without argv
+        // exposure; the shell trap removes the file on every normal/error path.
+        return parse(transport.runWithInput(listOf("sh", "-c", pipeline()), workingDir, body))
     }
 
-    /** A POSIX-sh one-liner: get the token, pipe the auth header to curl, POST the query. */
-    private fun pipeline(body: String): String {
+    /** A POSIX-sh script: get the token, create a private curl header, POST stdin. */
+    private fun pipeline(): String {
         val token =
-            if (explicitToken != null) {
-                "TOKEN=${shq(explicitToken)}"
+            if (processTokenAvailable) {
+                "TOKEN=\${D1_JDBC_API_TOKEN-}"
             } else {
                 // Read the token fresh from the env file each call (picks up rotation).
-                "TOKEN=\$(sed -n ${shq("s/^$tokenVar=//p")} ${shq(envFile)} | head -n1 | tr -d ${shq("\"")})"
+                "TOKEN=\$(sed -n ${shq("s/^$tokenVar=//p")} ${shq(envFile)} | head -n1 | tr -d ${shq("\"\\r")})"
             }
-        return "$token; printf ${shq("Authorization: Bearer %s")} \"\$TOKEN\" | " +
-            "curl -sS -H @- -H ${shq("Content-Type: application/json")} --data-raw ${shq(body)} ${shq(url)}"
+        return "set -eu; $token; " +
+            "[ -n \"\$TOKEN\" ] || { printf %s ${shq("D1 API token is empty")} >&2; exit 2; }; " +
+            "umask 077; HEADER=\$(mktemp \"\${TMPDIR:-/tmp}/d1-jdbc-header.XXXXXX\"); " +
+            "trap 'rm -f \"\$HEADER\"' EXIT HUP INT TERM; " +
+            "printf ${shq("Authorization: Bearer %s")} \"\$TOKEN\" >\"\$HEADER\"; unset TOKEN; " +
+            "curl -sS -H \"@\$HEADER\" -H ${shq("Content-Type: application/json")} " +
+            "--data-binary @- ${shq(url)}"
     }
 
     private fun shq(s: String): String = "'" + s.replace("'", "'\\''") + "'"
@@ -91,6 +97,7 @@ public class HttpEngine(
             // Wrangler.parse) so a multi-statement query — as a client may send for
             // introspection — yields the final statement's rows, not the first.
             val last = resp.result.lastOrNull()
+            require(last == null || last.success) { "D1 API returned an unsuccessful statement: ${last?.error ?: "unknown error"}" }
             val meta = last?.meta
             val changes = meta?.get("changes")?.jsonPrimitive?.longOrNull ?: 0L
             val lastRowId = meta?.get("last_row_id")?.jsonPrimitive?.longOrNull

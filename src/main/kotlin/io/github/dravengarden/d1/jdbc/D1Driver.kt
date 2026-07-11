@@ -25,23 +25,27 @@ public class D1Driver : Driver {
         // Validate the URL eagerly so misconfiguration surfaces here, then prove the
         // backend answers before handing back a connection — DataGrip treats a
         // connection it cannot validate as dead.
-        val config = D1Config.parse(url!!, info ?: Properties())
-        val connection = D1Connection(config)
-        if (config.probe) {
-            // Check the engine's CLI first, so a missing dependency gives a clear
-            // message ("'sqlite3' not found on SSH host 'hawk' …") instead of an
-            // opaque failure from the SELECT 1 probe below.
-            connection.preflight()
-            try {
-                connection.checkConnectivity()
-            } catch (e: Exception) {
-                // Plain SQLException with no custom cause: a client may run the
-                // driver out-of-process (DataGrip/RMI) and cannot deserialize a
-                // TransportException it has never seen.
-                throw SQLException("failed to reach d1 (db=${config.database}): ${e.message}")
+        return try {
+            val config = D1Config.parse(url!!, info ?: Properties())
+            val connection = D1Connection(config)
+            if (config.probe) {
+                try {
+                    // Check the engine's CLI first, so a missing dependency gives a clear
+                    // message before the SELECT 1 probe below.
+                    connection.preflight()
+                    connection.checkConnectivity()
+                } catch (e: Exception) {
+                    throw SQLException("failed to reach d1 (db=${config.database}): ${e.message}")
+                }
             }
+            connection
+        } catch (e: SQLException) {
+            throw e
+        } catch (e: Exception) {
+            // Keep only JDK exception types on the JDBC boundary; DataGrip may
+            // carry the exception over RMI without this driver's classes.
+            throw SQLException("invalid or unreachable d1 connection: ${e.message}")
         }
-        return connection
     }
 
     override fun getPropertyInfo(url: String?, info: Properties?): Array<DriverPropertyInfo> =
@@ -54,6 +58,20 @@ public class D1Driver : Driver {
             DriverPropertyInfo("env", null),
             DriverPropertyInfo("config", null),
             DriverPropertyInfo("wrangler", "wrangler"),
+            DriverPropertyInfo("engine", "auto").apply { choices = arrayOf("auto", "wrangler", "sqlite", "http") },
+            DriverPropertyInfo("persist", null),
+            DriverPropertyInfo("sqlite", "sqlite3"),
+            DriverPropertyInfo("file", null),
+            DriverPropertyInfo("account", null),
+            DriverPropertyInfo("database-id", null),
+            DriverPropertyInfo("env-file", ".env"),
+            DriverPropertyInfo("token-var", "CLOUDFLARE_API_TOKEN"),
+            DriverPropertyInfo("ssh", "ssh"),
+            DriverPropertyInfo("ssh-opts", null),
+            DriverPropertyInfo("timeout", D1Config.DEFAULT_TIMEOUT_SECONDS.toString()),
+            DriverPropertyInfo("probe", "true").apply { choices = arrayOf("true", "false") },
+            DriverPropertyInfo("access", "read").apply { choices = arrayOf("read", "write", "ddl") },
+            DriverPropertyInfo("cache", "true").apply { choices = arrayOf("true", "false") },
         )
 
     override fun getMajorVersion(): Int = 0

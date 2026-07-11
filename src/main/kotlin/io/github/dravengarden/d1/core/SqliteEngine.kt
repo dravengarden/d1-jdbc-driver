@@ -34,7 +34,10 @@ public class SqliteEngine(
 ) : Engine {
     private var resolved: String? = file
 
-    override fun checkAvailable(): Unit = requireTool(transport, workingDir, sqliteCommand.first(), "sqlite")
+    override fun checkAvailable() {
+        requireTool(transport, workingDir, sqliteCommand.first(), "sqlite")
+        if (file == null) requireTool(transport, workingDir, "find", null)
+    }
 
     override fun query(sql: String): QueryResult {
         val target = resolved ?: resolveFile().also { resolved = it }

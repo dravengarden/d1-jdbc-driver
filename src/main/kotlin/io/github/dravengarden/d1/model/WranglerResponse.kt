@@ -17,6 +17,7 @@ public data class WranglerResult(
     val results: List<JsonObject> = emptyList(),
     val success: Boolean = false,
     val meta: JsonObject? = null,
+    val error: String? = null,
 )
 
 /**

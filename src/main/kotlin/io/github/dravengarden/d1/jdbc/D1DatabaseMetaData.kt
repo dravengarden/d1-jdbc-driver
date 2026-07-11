@@ -107,7 +107,7 @@ public class D1DatabaseMetaData(
 
     override fun getRowIdLifetime(): RowIdLifetime = RowIdLifetime.ROWID_UNSUPPORTED
 
-    override fun getDefaultTransactionIsolation(): Int = Connection.TRANSACTION_SERIALIZABLE
+    override fun getDefaultTransactionIsolation(): Int = Connection.TRANSACTION_NONE
 
     // --- case handling ----------------------------------------------------
 
@@ -177,7 +177,7 @@ public class D1DatabaseMetaData(
 
     override fun supportsMultipleResultSets(): Boolean = false
 
-    override fun supportsMultipleTransactions(): Boolean = true
+    override fun supportsMultipleTransactions(): Boolean = false
 
     override fun supportsNonNullableColumns(): Boolean = true
 
@@ -253,11 +253,11 @@ public class D1DatabaseMetaData(
 
     override fun doesMaxRowSizeIncludeBlobs(): Boolean = false
 
-    override fun supportsTransactions(): Boolean = true
+    override fun supportsTransactions(): Boolean = false
 
-    override fun supportsTransactionIsolationLevel(level: Int): Boolean = level == Connection.TRANSACTION_SERIALIZABLE
+    override fun supportsTransactionIsolationLevel(level: Int): Boolean = level == Connection.TRANSACTION_NONE
 
-    override fun supportsDataDefinitionAndDataManipulationTransactions(): Boolean = true
+    override fun supportsDataDefinitionAndDataManipulationTransactions(): Boolean = false
 
     override fun supportsDataManipulationTransactionsOnly(): Boolean = false
 
@@ -366,7 +366,8 @@ public class D1DatabaseMetaData(
         // (cf. `PRAGMA table_list`), so the tables below are tagged to match.
         metaResultSet(listOf("TABLE_SCHEM", "TABLE_CATALOG"), listOf(listOf(SCHEMA, null)))
 
-    override fun getSchemas(catalog: String?, schemaPattern: String?): ResultSet = getSchemas()
+    override fun getSchemas(catalog: String?, schemaPattern: String?): ResultSet =
+        if (scopeMatches(catalog, schemaPattern)) getSchemas() else metaResultSet(listOf("TABLE_SCHEM", "TABLE_CATALOG"), emptyList())
 
     override fun getTableTypes(): ResultSet =
         metaResultSet(listOf("TABLE_TYPE"), listOf(listOf("TABLE"), listOf("VIEW")))
@@ -379,6 +380,7 @@ public class D1DatabaseMetaData(
         tableNamePattern: String?,
         types: Array<String>?,
     ): ResultSet {
+        if (!scopeMatches(catalog, schemaPattern)) return emptyTables()
         val wanted = types?.map { it.uppercase() }?.toSet()
         val rows = mutableListOf<List<Any?>>()
         val q = query(
@@ -409,26 +411,33 @@ public class D1DatabaseMetaData(
         columnNamePattern: String?,
     ): ResultSet {
         val rows = mutableListOf<List<Any?>>()
+        if (!scopeMatches(catalog, schemaPattern)) return columnsResult(rows)
         for (table in tableNames(tableNamePattern)) {
-            val info = query("PRAGMA table_info(${quoteSqlString(table)})")
+            val info = query("PRAGMA table_xinfo(${quoteSqlString(table)})")
             for (row in info.rows) {
                 val colName = info.text(row, "name") ?: continue
                 if (columnNamePattern != null && !matchesLike(colName, columnNamePattern)) continue
                 val declared = info.text(row, "type").orEmpty()
-                val notNull = info.text(row, "notnull") == "1"
+                val primaryKey = (info.text(row, "pk")?.toIntOrNull() ?: 0) > 0
+                val notNull = info.text(row, "notnull") == "1" || primaryKey
                 val nullable = if (notNull) DatabaseMetaData.columnNoNulls else DatabaseMetaData.columnNullable
                 val ordinal = (info.text(row, "cid")?.toIntOrNull() ?: 0) + 1
+                val hidden = info.text(row, "hidden")?.toIntOrNull() ?: 0
                 rows += listOf(
                     null, SCHEMA, table, colName,
-                    sqliteTypeToJdbc(declared), declared.ifEmpty { "TEXT" },
+                    sqliteTypeToJdbc(declared), declared.ifEmpty { "BLOB" },
                     0, null, null, 10,
                     nullable, null, info.text(row, "dflt_value"), null, null, null,
                     ordinal, if (notNull) "NO" else "YES",
-                    null, null, null, null, "NO", "NO",
+                    null, null, null, null, "NO", if (hidden >= 2) "YES" else "NO",
                 )
             }
         }
-        return metaResultSet(
+        return columnsResult(rows)
+    }
+
+    private fun columnsResult(rows: List<List<Any?>>): ResultSet =
+        metaResultSet(
             listOf(
                 "TABLE_CAT", "TABLE_SCHEM", "TABLE_NAME", "COLUMN_NAME",
                 "DATA_TYPE", "TYPE_NAME", "COLUMN_SIZE", "BUFFER_LENGTH",
@@ -439,12 +448,11 @@ public class D1DatabaseMetaData(
             ),
             rows,
         )
-    }
 
     override fun getPrimaryKeys(catalog: String?, schema: String?, table: String?): ResultSet {
         val rows = mutableListOf<List<Any?>>()
-        if (table != null) {
-            val info = query("PRAGMA table_info(${quoteSqlString(table)})")
+        if (table != null && scopeMatches(catalog, schema)) {
+            val info = query("PRAGMA table_xinfo(${quoteSqlString(table)})")
             for (row in info.rows) {
                 val pk = info.text(row, "pk")?.toIntOrNull() ?: 0
                 if (pk <= 0) continue
@@ -466,7 +474,7 @@ public class D1DatabaseMetaData(
         approximate: Boolean,
     ): ResultSet {
         val rows = mutableListOf<List<Any?>>()
-        if (table != null) {
+        if (table != null && scopeMatches(catalog, schema)) {
             val list = query("PRAGMA index_list(${quoteSqlString(table)})")
             for (idxRow in list.rows) {
                 val indexName = list.text(idxRow, "name") ?: continue
@@ -495,9 +503,11 @@ public class D1DatabaseMetaData(
 
     // --- empty catalogs for unsupported relational features ---------------
 
-    override fun getImportedKeys(catalog: String?, schema: String?, table: String?): ResultSet = emptyKeys()
+    override fun getImportedKeys(catalog: String?, schema: String?, table: String?): ResultSet =
+        if (table != null && scopeMatches(catalog, schema)) foreignKeys(foreignTable = table, primaryTable = null) else emptyKeys()
 
-    override fun getExportedKeys(catalog: String?, schema: String?, table: String?): ResultSet = emptyKeys()
+    override fun getExportedKeys(catalog: String?, schema: String?, table: String?): ResultSet =
+        if (table != null && scopeMatches(catalog, schema)) foreignKeys(foreignTable = null, primaryTable = table) else emptyKeys()
 
     override fun getCrossReference(
         parentCatalog: String?,
@@ -506,7 +516,17 @@ public class D1DatabaseMetaData(
         foreignCatalog: String?,
         foreignSchema: String?,
         foreignTable: String?,
-    ): ResultSet = emptyKeys()
+    ): ResultSet =
+        if (
+            foreignTable != null &&
+            parentTable != null &&
+            scopeMatches(parentCatalog, parentSchema) &&
+            scopeMatches(foreignCatalog, foreignSchema)
+        ) {
+            foreignKeys(foreignTable, parentTable)
+        } else {
+            emptyKeys()
+        }
 
     override fun getProcedures(catalog: String?, schemaPattern: String?, procedureNamePattern: String?): ResultSet =
         metaResultSet(
@@ -545,14 +565,48 @@ public class D1DatabaseMetaData(
     // --- helpers ----------------------------------------------------------
 
     private fun emptyKeys(): ResultSet =
+        keysResult(emptyList())
+
+    private fun foreignKeys(foreignTable: String?, primaryTable: String?): ResultSet {
+        val rows = mutableListOf<List<Any?>>()
+        val foreignTables = foreignTable?.let(::listOf) ?: tableNames(null)
+        for (fkTable in foreignTables) {
+            val keys = query("PRAGMA foreign_key_list(${quoteSqlString(fkTable)})")
+            for (row in keys.rows) {
+                val pkTable = keys.text(row, "table") ?: continue
+                if (primaryTable != null && pkTable != primaryTable) continue
+                rows +=
+                    listOf(
+                        null, SCHEMA, pkTable, keys.text(row, "to"),
+                        null, SCHEMA, fkTable, keys.text(row, "from"),
+                        ((keys.text(row, "seq")?.toIntOrNull() ?: 0) + 1).toShort(),
+                        keyRule(keys.text(row, "on_update")),
+                        keyRule(keys.text(row, "on_delete")),
+                        null, null, DatabaseMetaData.importedKeyNotDeferrable.toShort(),
+                    )
+            }
+        }
+        return keysResult(rows)
+    }
+
+    private fun keysResult(rows: List<List<Any?>>): ResultSet =
         metaResultSet(
             listOf(
                 "PKTABLE_CAT", "PKTABLE_SCHEM", "PKTABLE_NAME", "PKCOLUMN_NAME",
                 "FKTABLE_CAT", "FKTABLE_SCHEM", "FKTABLE_NAME", "FKCOLUMN_NAME",
                 "KEY_SEQ", "UPDATE_RULE", "DELETE_RULE", "FK_NAME", "PK_NAME", "DEFERRABILITY",
             ),
-            emptyList(),
+            rows,
         )
+
+    private fun keyRule(rule: String?): Short =
+        when (rule?.uppercase()) {
+            "CASCADE" -> DatabaseMetaData.importedKeyCascade
+            "SET NULL" -> DatabaseMetaData.importedKeySetNull
+            "SET DEFAULT" -> DatabaseMetaData.importedKeySetDefault
+            "RESTRICT" -> DatabaseMetaData.importedKeyRestrict
+            else -> DatabaseMetaData.importedKeyNoAction
+        }.toShort()
 
     private fun typeRow(name: String, jdbcType: Int): List<Any?> =
         listOf(
@@ -561,10 +615,10 @@ public class D1DatabaseMetaData(
             false, false, name, 0, 0, 0, 0, 10,
         )
 
-    /** The base table names matching [pattern] (NULL = all), excluding views. */
+    /** Table and view names matching [pattern] (NULL = all). */
     private fun tableNames(pattern: String?): List<String> {
         val q = query(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' " +
+            "SELECT name FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' " +
                 likeClause("name", pattern) + "ORDER BY name",
         )
         return q.rows.mapNotNull { q.text(it, "name") }
@@ -572,20 +626,23 @@ public class D1DatabaseMetaData(
 
     /** A trailing `AND <col> LIKE '<pattern>' ` fragment, or empty when no filter. */
     private fun likeClause(column: String, pattern: String?): String =
-        if (pattern == null || pattern == "%") "" else "AND $column LIKE ${quoteSqlString(pattern)} "
+        if (pattern == null || pattern == "%") "" else "AND $column LIKE ${quoteSqlString(pattern)} ESCAPE '\\' "
 
     /** SQL LIKE semantics for client-side filtering (`%` and `_` wildcards). */
     private fun matchesLike(value: String, pattern: String): Boolean {
         if (pattern == "%") return true
         val regex = buildString {
             append('^')
+            var escaped = false
             for (c in pattern) {
                 when (c) {
-                    '%' -> append(".*")
-                    '_' -> append('.')
-                    else -> append(Regex.escape(c.toString()))
+                    '\\' -> if (escaped) { append(Regex.escape("\\")); escaped = false } else escaped = true
+                    '%' -> if (escaped) { append('%'); escaped = false } else append(".*")
+                    '_' -> if (escaped) { append('_'); escaped = false } else append('.')
+                    else -> { append(Regex.escape(c.toString())); escaped = false }
                 }
             }
+            if (escaped) append(Regex.escape("\\"))
             append('$')
         }
         return Regex(regex, RegexOption.IGNORE_CASE).matches(value)
@@ -598,7 +655,23 @@ public class D1DatabaseMetaData(
             t.contains("CHAR") || t.contains("CLOB") || t.contains("TEXT") -> Types.VARCHAR
             t.contains("BLOB") || t.isEmpty() -> Types.BLOB
             t.contains("REAL") || t.contains("FLOA") || t.contains("DOUB") -> Types.DOUBLE
-            else -> Types.VARCHAR
+            t.contains("NUM") || t.contains("DEC") -> Types.NUMERIC
+            t.contains("BOOL") -> Types.BOOLEAN
+            t.contains("DATE") || t.contains("TIME") -> Types.VARCHAR
+            else -> Types.NUMERIC
         }
     }
+
+    private fun scopeMatches(catalog: String?, schemaPattern: String?): Boolean =
+        (catalog == null || catalog.isEmpty()) &&
+            (schemaPattern == null || schemaPattern == "%" || matchesLike(SCHEMA, schemaPattern))
+
+    private fun emptyTables(): ResultSet =
+        metaResultSet(
+            listOf(
+                "TABLE_CAT", "TABLE_SCHEM", "TABLE_NAME", "TABLE_TYPE", "REMARKS",
+                "TYPE_CAT", "TYPE_SCHEM", "TYPE_NAME", "SELF_REFERENCING_COL_NAME", "REF_GENERATION",
+            ),
+            emptyList(),
+        )
 }

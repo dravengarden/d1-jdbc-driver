@@ -83,6 +83,7 @@ public data class D1Config(
 ) {
     /** The engine that actually runs queries, resolving [EngineKind.AUTO]. */
     public fun toEngine(): Engine {
+        validate()
         val transport = toTransport()
         return when (resolveEngine()) {
             EngineKind.SQLITE -> SqliteEngine(transport, sqliteCommand, workingDir, persistTo, sqliteFile)
@@ -92,7 +93,7 @@ public data class D1Config(
                     workingDir,
                     accountId = requireNotNull(httpAccountId) { "engine=http needs account=" },
                     databaseId = requireNotNull(httpDatabaseId) { "engine=http needs database-id=" },
-                    explicitToken = apiToken,
+                    processTokenAvailable = apiToken != null && this.transport == TransportKind.NORMAL,
                     envFile = httpEnvFile,
                     tokenVar = httpTokenVar,
                 )
@@ -104,7 +105,7 @@ public data class D1Config(
         when (engine) {
             EngineKind.AUTO ->
                 when {
-                    mode == Mode.LOCAL && (persistTo != null || sqliteFile != null) -> EngineKind.SQLITE
+                    mode == Mode.LOCAL && access == Access.READ && (persistTo != null || sqliteFile != null) -> EngineKind.SQLITE
                     mode == Mode.REMOTE && httpAccountId != null && httpDatabaseId != null -> EngineKind.HTTP
                     else -> EngineKind.WRANGLER
                 }
@@ -116,7 +117,7 @@ public data class D1Config(
             TransportKind.NORMAL ->
                 LocalTransport(
                     timeoutSeconds = timeoutSeconds,
-                    environment = apiToken?.let { mapOf("CLOUDFLARE_API_TOKEN" to it) } ?: emptyMap(),
+                    environment = localTokenEnvironment(),
                 )
             TransportKind.SSH ->
                 SshTransport(
@@ -127,9 +128,55 @@ public data class D1Config(
                 )
         }
 
+    private fun localTokenEnvironment(): Map<String, String> {
+        val token = apiToken ?: return emptyMap()
+        return when (resolveEngine()) {
+            EngineKind.HTTP -> mapOf("D1_JDBC_API_TOKEN" to token)
+            EngineKind.WRANGLER -> mapOf("CLOUDFLARE_API_TOKEN" to token)
+            else -> emptyMap()
+        }
+    }
+
+    private fun validate() {
+        require(database.isNotBlank()) { "db= must not be blank" }
+        require(wranglerCommand.isNotEmpty()) { "wrangler command must not be empty" }
+        require(sshCommand.isNotEmpty()) { "ssh command must not be empty" }
+        require(sqliteCommand.isNotEmpty()) { "sqlite command must not be empty" }
+        require(timeoutSeconds <= MAX_TIMEOUT_SECONDS) { "timeout= must not exceed $MAX_TIMEOUT_SECONDS seconds" }
+        if (transport == TransportKind.SSH) require(!sshHost.isNullOrBlank()) { "transport=ssh requires host=" }
+        when (resolveEngine()) {
+            EngineKind.SQLITE -> {
+                require(mode == Mode.LOCAL) { "engine=sqlite only supports mode=local" }
+                require(access == Access.READ) { "engine=sqlite is read-only; use engine=wrangler for write/ddl access" }
+                require(persistTo != null || sqliteFile != null) { "engine=sqlite needs persist= or file=" }
+            }
+            EngineKind.HTTP -> {
+                require(mode == Mode.REMOTE) { "engine=http only supports mode=remote" }
+                require(!httpAccountId.isNullOrBlank()) { "engine=http needs account=" }
+                require(!httpDatabaseId.isNullOrBlank()) { "engine=http needs database-id=" }
+                require(ID_COMPONENT.matches(httpAccountId)) { "invalid account= identifier" }
+                require(ID_COMPONENT.matches(httpDatabaseId)) { "invalid database-id= identifier" }
+                require(ENV_NAME.matches(httpTokenVar)) { "invalid token-var= (expected a shell environment variable name)" }
+            }
+            else -> Unit
+        }
+    }
+
+    /** Never include [apiToken] in logs, exception diagnostics, or debugger output. */
+    override fun toString(): String =
+        "D1Config(transport=$transport, sshHost=$sshHost, workingDir=$workingDir, database=$database, " +
+            "mode=$mode, env=$env, configPath=$configPath, wranglerCommand=$wranglerCommand, " +
+            "persistTo=$persistTo, sshCommand=$sshCommand, sshOptions=$sshOptions, timeoutSeconds=$timeoutSeconds, " +
+            "probe=$probe, access=$access, cacheIntrospection=$cacheIntrospection, apiToken=<redacted>, " +
+            "engine=$engine, sqliteCommand=$sqliteCommand, sqliteFile=$sqliteFile, httpAccountId=$httpAccountId, " +
+            "httpDatabaseId=$httpDatabaseId, httpEnvFile=$httpEnvFile, httpTokenVar=$httpTokenVar)"
+
     public companion object {
         public const val URL_PREFIX: String = "jdbc:d1:"
         public const val DEFAULT_TIMEOUT_SECONDS: Long = 120
+        private const val MAX_TIMEOUT_SECONDS = 86_400L
+        private val ENV_NAME = Regex("[A-Za-z_][A-Za-z0-9_]*")
+        private val ID_COMPONENT = Regex("[A-Za-z0-9_-]+")
 
         public fun parse(url: String, props: Properties): D1Config {
             require(url.startsWith(URL_PREFIX)) { "not a d1 url: $url" }

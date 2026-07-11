@@ -15,7 +15,6 @@
       devShells.${system}.default = pkgs.mkShell {
         packages = [
           pkgs.jdk21
-          pkgs.gradle
         ];
         # Gradle's JVM does not read http_proxy/https_proxy env vars; surface
         # them as JVM system properties so dependency downloads work behind a

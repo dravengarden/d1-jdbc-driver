@@ -35,9 +35,9 @@ class SqlTest {
 
     @Test
     fun leavesQuestionMarksInsideStringLiteralsAlone() {
-        val sql = "SELECT '? literal' WHERE a = ?"
+        val sql = "SELECT '? literal', \"? identifier\", `? other`, [? bracket] -- ? comment\nWHERE a = ? /* ? block */"
         assertEquals(
-            "SELECT '? literal' WHERE a = 9",
+            "SELECT '? literal', \"? identifier\", `? other`, [? bracket] -- ? comment\nWHERE a = 9 /* ? block */",
             substituteParams(sql, mapOf(1 to "9")),
         )
     }
@@ -58,5 +58,31 @@ class SqlTest {
         assertFalse(looksLikeQuery("UPDATE t SET a = 1"))
         assertFalse(looksLikeQuery("DELETE FROM t"))
         assertFalse(looksLikeQuery("CREATE TABLE t (a)"))
+        assertTrue(looksLikeQuery("INSERT INTO t VALUES (1) RETURNING id"))
+    }
+
+    @Test
+    fun classifiesEveryStatementAndIgnoresKeywordsInCommentsAndStrings() {
+        assertEquals(StatementClass.DML, classifyStatement("SELECT 1; DELETE FROM t"))
+        assertEquals(StatementClass.DDL, classifyStatement("SELECT 1; DROP TABLE t"))
+        assertEquals(StatementClass.READ, classifyStatement("-- DELETE ignored\nSELECT 'DROP TABLE t'"))
+        assertEquals(StatementClass.READ, classifyStatement("WITH x AS (SELECT 'DELETE') SELECT * FROM x"))
+        assertEquals(StatementClass.DML, classifyStatement("WITH x AS (SELECT 1) DELETE FROM t RETURNING id"))
+    }
+
+    @Test
+    fun onlyAllowsKnownReadOnlyPragmasAtReadLevel() {
+        assertEquals(StatementClass.READ, classifyStatement("PRAGMA main.table_xinfo('t')"))
+        assertEquals(StatementClass.READ, classifyStatement("PRAGMA foreign_key_list('t')"))
+        assertEquals(StatementClass.DML, classifyStatement("PRAGMA user_version = 2"))
+        assertEquals(StatementClass.DML, classifyStatement("PRAGMA writable_schema"))
+    }
+
+    @Test
+    fun rendersBlobTemporalAndRejectsNonFiniteNumbers() {
+        assertEquals("X'00ff'", sqlLiteralOf(byteArrayOf(0, -1)))
+        assertEquals("'2026-07-11'", sqlLiteralOf(java.time.LocalDate.of(2026, 7, 11)))
+        assertFailsWith<SQLException> { sqlLiteralOf(Double.NaN) }
+        assertFailsWith<SQLException> { sqlLiteralOf(Double.POSITIVE_INFINITY) }
     }
 }

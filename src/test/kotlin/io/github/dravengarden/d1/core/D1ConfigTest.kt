@@ -79,6 +79,9 @@ class D1ConfigTest {
     fun rejectsBadBooleanAndTimeout() {
         assertFailsWith<IllegalStateException> { D1Config.parse("jdbc:d1:?db=x&probe=maybe", Properties()) }
         assertFailsWith<IllegalStateException> { D1Config.parse("jdbc:d1:?db=x&timeout=0", Properties()) }
+        assertFailsWith<IllegalArgumentException> {
+            D1Config.parse("jdbc:d1:?db=x&timeout=999999", Properties()).toEngine()
+        }
     }
 
     @Test
@@ -111,6 +114,25 @@ class D1ConfigTest {
     }
 
     @Test
+    fun autoEngineUsesWranglerWhenLocalWritesAreEnabled() {
+        val writable = D1Config.parse("jdbc:d1:?db=x&persist=p&access=write", Properties())
+        assertEquals(true, writable.toEngine() is Wrangler)
+    }
+
+    @Test
+    fun rejectsInvalidEngineModeAndWritableSqliteCombinations() {
+        assertFailsWith<IllegalArgumentException> {
+            D1Config.parse("jdbc:d1:?db=x&mode=remote&engine=sqlite&file=x", Properties()).toEngine()
+        }
+        assertFailsWith<IllegalArgumentException> {
+            D1Config.parse("jdbc:d1:?db=x&mode=local&engine=http&account=a&database-id=d", Properties()).toEngine()
+        }
+        assertFailsWith<IllegalArgumentException> {
+            D1Config.parse("jdbc:d1:?db=x&engine=sqlite&file=x&access=write", Properties()).toEngine()
+        }
+    }
+
+    @Test
     fun httpEngineRequiresAccountAndDbId() {
         assertFailsWith<IllegalArgumentException> {
             D1Config.parse("jdbc:d1:?db=mydb&mode=remote&engine=http&account=acc", Properties()).toEngine()
@@ -134,5 +156,6 @@ class D1ConfigTest {
         assertEquals("cf-token-123", D1Config.parse("jdbc:d1:?db=x&mode=remote", props).apiToken)
         // A token in the URL is NOT picked up — secrets never travel in the URL.
         assertEquals(null, D1Config.parse("jdbc:d1:?db=x&password=in-url", Properties()).apiToken)
+        assertEquals(false, D1Config.parse("jdbc:d1:?db=x", props).toString().contains("cf-token-123"))
     }
 }

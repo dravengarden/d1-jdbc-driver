@@ -3,6 +3,8 @@ package io.github.dravengarden.d1.core
 import io.github.dravengarden.d1.transport.Transport
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 private object NoopTransport : Transport {
     override fun run(command: List<String>, workingDir: String?): String = error("unused")
@@ -80,5 +82,16 @@ class WranglerTest {
             Wrangler.parse("""[ { "results": [], "success": true, "meta": {"changes": 5, "last_row_id": 99} } ]""")
         assertEquals(5L, result.changes)
         assertEquals(99L, result.lastRowId)
+    }
+
+    @Test
+    fun ignoresBracketedBannerTextAndRejectsUnsuccessfulResults() {
+        val result = Wrangler.parse("[dotenv] loaded\n[{\"results\":[{\"n\":1}],\"success\":true}]")
+        assertEquals("1", result.rows.single().single().toString())
+        val error =
+            assertFailsWith<IllegalArgumentException> {
+                Wrangler.parse("""[{"results":[],"success":false,"error":"SQLITE_ERROR"}]""")
+            }
+        assertTrue(error.message!!.contains("SQLITE_ERROR"))
     }
 }

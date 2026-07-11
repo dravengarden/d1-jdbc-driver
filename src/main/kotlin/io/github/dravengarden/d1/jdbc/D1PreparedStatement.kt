@@ -1,69 +1,81 @@
 package io.github.dravengarden.d1.jdbc
 
+import io.github.dravengarden.d1.model.QueryResult
 import java.math.BigDecimal
 import java.sql.Connection
 import java.sql.ResultSet
 import java.sql.ResultSetMetaData
 import java.sql.SQLException
+import java.sql.SQLFeatureNotSupportedException
 import java.sql.SQLWarning
 
-/**
- * A [java.sql.PreparedStatement] whose positional `?` parameters are bound
- * client-side and spliced into the SQL before it reaches wrangler (see [Sql]).
- * Only the setters a browsing client needs are implemented; the rest fall through
- * to [AbstractPreparedStatement] (throwing).
- */
+/** A client-side-bound PreparedStatement for wrangler's command-only SQL API. */
 public class D1PreparedStatement(
     private val connection: D1Connection,
     private val sql: String,
 ) : AbstractPreparedStatement() {
     private val params = mutableMapOf<Int, String>()
     private var current: D1ResultSet? = null
-    private var updateCount = -1
+    private var updateCount = -1L
     private var closed = false
+    private var maxRows = 0L
+    private var closeOnCompletion = false
 
     private fun bind(index: Int, literal: String) {
+        if (isClosed) throw SQLException("statement is closed")
         if (index < 1) throw SQLException("parameter index out of range: $index")
         params[index] = literal
     }
 
-    private fun bound(): String {
-        if (closed) throw SQLException("statement is closed")
+    private fun begin(): String {
+        if (isClosed) throw SQLException("statement is closed")
+        connection.ensureOpen()
+        current?.close()
+        current = null
+        if (isClosed) throw SQLException("statement was closed when its previous result set closed")
+        updateCount = -1
         return substituteParams(sql, params)
     }
 
-    override fun executeQuery(): ResultSet {
-        val rs = D1ResultSet(connection.execute(bound()), this)
-        current = rs
-        updateCount = -1
-        return rs
+    private fun resultSet(result: QueryResult): D1ResultSet {
+        val limited = if (maxRows > 0 && result.rows.size.toLong() > maxRows) result.copy(rows = result.rows.take(maxRows.toInt())) else result
+        return D1ResultSet(limited, this).also { current = it }
     }
 
-    override fun executeUpdate(): Int {
-        val text = bound()
+    private fun runUpdate(text: String): Long {
         val result = connection.execute(text)
-        connection.invalidateIntrospection()
-        current = null
-        updateCount = result.changes.toInt()
+        if (classifyStatement(text) != StatementClass.READ) connection.invalidateIntrospection()
+        updateCount = result.changes
         return updateCount
     }
 
+    override fun executeQuery(): ResultSet {
+        val text = begin()
+        if (!looksLikeQuery(text)) throw SQLException("executeQuery requires a row-returning statement")
+        return resultSet(connection.execute(text))
+    }
+
+    override fun executeUpdate(): Int = narrowUpdateCount(executeLargeUpdate())
+
+    override fun executeLargeUpdate(): Long {
+        val text = begin()
+        if (looksLikeQuery(text)) throw SQLException("executeUpdate cannot execute a row-returning statement")
+        return runUpdate(text)
+    }
+
     override fun execute(): Boolean {
-        val text = bound()
+        val text = begin()
         return if (looksLikeQuery(text)) {
-            current = D1ResultSet(connection.execute(text), this)
-            updateCount = -1
+            resultSet(connection.execute(text))
             true
         } else {
-            val result = connection.execute(text)
-            connection.invalidateIntrospection()
-            current = null
-            updateCount = result.changes.toInt()
+            runUpdate(text)
             false
         }
     }
 
     override fun clearParameters() {
+        if (isClosed) throw SQLException("statement is closed")
         params.clear()
     }
 
@@ -81,45 +93,64 @@ public class D1PreparedStatement(
 
     override fun setLong(parameterIndex: Int, x: Long): Unit = bind(parameterIndex, x.toString())
 
-    override fun setFloat(parameterIndex: Int, x: Float): Unit = bind(parameterIndex, x.toString())
+    override fun setFloat(parameterIndex: Int, x: Float): Unit = bind(parameterIndex, sqlLiteralOf(x))
 
-    override fun setDouble(parameterIndex: Int, x: Double): Unit = bind(parameterIndex, x.toString())
+    override fun setDouble(parameterIndex: Int, x: Double): Unit = bind(parameterIndex, sqlLiteralOf(x))
 
-    override fun setBigDecimal(parameterIndex: Int, x: BigDecimal?): Unit =
-        bind(parameterIndex, x?.toPlainString() ?: "NULL")
+    override fun setBigDecimal(parameterIndex: Int, x: BigDecimal?): Unit = bind(parameterIndex, sqlLiteralOf(x))
 
-    override fun setString(parameterIndex: Int, x: String?): Unit =
-        bind(parameterIndex, if (x == null) "NULL" else quoteSqlString(x))
+    override fun setString(parameterIndex: Int, x: String?): Unit = bind(parameterIndex, sqlLiteralOf(x))
 
     override fun setNString(parameterIndex: Int, value: String?): Unit = setString(parameterIndex, value)
+
+    override fun setBytes(parameterIndex: Int, x: ByteArray?): Unit = bind(parameterIndex, sqlLiteralOf(x))
+
+    override fun setDate(parameterIndex: Int, x: java.sql.Date?): Unit = bind(parameterIndex, sqlLiteralOf(x))
+
+    override fun setTime(parameterIndex: Int, x: java.sql.Time?): Unit = bind(parameterIndex, sqlLiteralOf(x))
+
+    override fun setTimestamp(parameterIndex: Int, x: java.sql.Timestamp?): Unit = bind(parameterIndex, sqlLiteralOf(x))
 
     override fun setObject(parameterIndex: Int, x: Any?): Unit = bind(parameterIndex, sqlLiteralOf(x))
 
     override fun setObject(parameterIndex: Int, x: Any?, targetSqlType: Int): Unit = setObject(parameterIndex, x)
 
-    override fun setObject(parameterIndex: Int, x: Any?, targetSqlType: Int, scaleOrLength: Int): Unit =
-        setObject(parameterIndex, x)
+    override fun setObject(parameterIndex: Int, x: Any?, targetSqlType: Int, scaleOrLength: Int): Unit = setObject(parameterIndex, x)
 
     override fun getResultSet(): ResultSet? = current
 
-    override fun getUpdateCount(): Int = updateCount
+    override fun getUpdateCount(): Int = if (updateCount < 0) -1 else narrowUpdateCount(updateCount)
 
-    override fun getMoreResults(): Boolean {
-        current = null
+    override fun getLargeUpdateCount(): Long = updateCount
+
+    override fun getMoreResults(): Boolean = getMoreResults(java.sql.Statement.CLOSE_CURRENT_RESULT)
+
+    override fun getMoreResults(current: Int): Boolean {
+        when (current) {
+            java.sql.Statement.CLOSE_CURRENT_RESULT, java.sql.Statement.CLOSE_ALL_RESULTS -> this.current?.close()
+            java.sql.Statement.KEEP_CURRENT_RESULT -> throw SQLFeatureNotSupportedException("multiple open results are not supported")
+            else -> throw SQLException("invalid getMoreResults option: $current")
+        }
+        this.current = null
         updateCount = -1
         return false
     }
 
-    override fun getMoreResults(current: Int): Boolean = getMoreResults()
-
     override fun getMetaData(): ResultSetMetaData? = current?.metaData
 
-    override fun close() {
-        closed = true
-        current?.close()
+    internal fun onResultSetClosed(resultSet: D1ResultSet) {
+        if (current === resultSet) current = null
+        if (closeOnCompletion && !closed) close()
     }
 
-    override fun isClosed(): Boolean = closed
+    override fun close() {
+        if (closed) return
+        closed = true
+        current?.close()
+        current = null
+    }
+
+    override fun isClosed(): Boolean = closed || connection.isClosed
 
     override fun getConnection(): Connection = connection
 
@@ -138,46 +169,52 @@ public class D1PreparedStatement(
     override fun getFetchSize(): Int = 0
 
     override fun setFetchSize(rows: Int) {
-        // No streaming cursor; nothing to size.
+        if (rows < 0) throw SQLException("fetch size must be non-negative")
     }
 
-    override fun getMaxRows(): Int = 0
+    override fun getMaxRows(): Int = if (maxRows > Int.MAX_VALUE) Int.MAX_VALUE else maxRows.toInt()
 
     override fun setMaxRows(max: Int) {
-        // Unbounded.
+        if (max < 0) throw SQLException("max rows must be non-negative")
+        maxRows = max.toLong()
+    }
+
+    override fun getLargeMaxRows(): Long = maxRows
+
+    override fun setLargeMaxRows(max: Long) {
+        if (max < 0 || max > Int.MAX_VALUE) throw SQLException("max rows must be between 0 and ${Int.MAX_VALUE}")
+        maxRows = max
     }
 
     override fun getMaxFieldSize(): Int = 0
 
     override fun setMaxFieldSize(max: Int) {
-        // No per-field cap.
+        if (max < 0) throw SQLException("max field size must be non-negative")
+        if (max != 0) throw SQLFeatureNotSupportedException("field-size truncation is not supported")
     }
 
     override fun getQueryTimeout(): Int = 0
 
     override fun setQueryTimeout(seconds: Int) {
-        // The transport owns its own timeout.
+        if (seconds < 0) throw SQLException("query timeout must be non-negative")
+        if (seconds != 0) throw SQLFeatureNotSupportedException("use the connection URL timeout= setting")
     }
 
     override fun setEscapeProcessing(enable: Boolean) {
-        // SQL is passed through verbatim.
+        if (enable) throw SQLFeatureNotSupportedException("JDBC escape processing is not supported")
     }
 
     override fun getWarnings(): SQLWarning? = null
 
-    override fun clearWarnings() {
-        // No warnings are accumulated.
-    }
+    override fun clearWarnings(): Unit = Unit
 
     override fun isPoolable(): Boolean = false
 
-    override fun setPoolable(poolable: Boolean) {
-        // Not pooled.
-    }
+    override fun setPoolable(poolable: Boolean): Unit = Unit
 
-    override fun isCloseOnCompletion(): Boolean = false
+    override fun isCloseOnCompletion(): Boolean = closeOnCompletion
 
     override fun closeOnCompletion() {
-        // No-op so clients that call it still work.
+        closeOnCompletion = true
     }
 }

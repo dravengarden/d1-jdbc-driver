@@ -22,16 +22,22 @@ class D1DatabaseMetaDataTest {
         override fun run(command: List<String>, workingDir: String?): String {
             val sql = command.last()
             return when {
+                "type IN ('table','view')" in sql && "name LIKE 'accounts'" in sql ->
+                    """[{"results":[{"name":"accounts","type":"table"}],"success":true}]"""
+                "type IN ('table','view')" in sql && "name LIKE 'v_active'" in sql ->
+                    """[{"results":[{"name":"v_active","type":"view"}],"success":true}]"""
                 "type IN ('table','view')" in sql ->
                     """[{"results":[{"name":"accounts","type":"table"},
                                     {"name":"v_active","type":"view"}],"success":true}]"""
-                "type='table'" in sql ->
-                    """[{"results":[{"name":"accounts"}],"success":true}]"""
-                "PRAGMA table_info('accounts')" in sql ->
+                "PRAGMA table_xinfo('accounts')" in sql ->
                     """[{"results":[
-                          {"cid":0,"name":"id","type":"TEXT","notnull":1,"dflt_value":null,"pk":1},
-                          {"cid":1,"name":"email","type":"TEXT","notnull":0,"dflt_value":null,"pk":0}
+                          {"cid":0,"name":"id","type":"TEXT","notnull":0,"dflt_value":null,"pk":1,"hidden":0},
+                          {"cid":1,"name":"email","type":"TEXT","notnull":0,"dflt_value":null,"pk":0,"hidden":0}
                         ],"success":true}]"""
+                "PRAGMA table_xinfo('v_active')" in sql ->
+                    """[{"results":[{"cid":0,"name":"id","type":"TEXT","notnull":0,"pk":0,"hidden":0}],"success":true}]"""
+                "PRAGMA foreign_key_list('accounts')" in sql ->
+                    """[{"results":[{"id":0,"seq":0,"table":"teams","from":"team_id","to":"id","on_update":"NO ACTION","on_delete":"CASCADE"}],"success":true}]"""
                 else -> """[{"results":[],"success":true}]"""
             }
         }
@@ -102,5 +108,24 @@ class D1DatabaseMetaDataTest {
         assertTrue(rs.next())
         assertEquals("id", rs.getString("COLUMN_NAME"))
         assertEquals(1, rs.getInt("KEY_SEQ"))
+    }
+
+    @Test
+    fun listsViewColumnsAndForeignKeys() {
+        val columns = metaData().getColumns(null, "main", "v_active", null)
+        assertTrue(columns.next())
+        assertEquals("id", columns.getString("COLUMN_NAME"))
+
+        val keys = metaData().getImportedKeys(null, "main", "accounts")
+        assertTrue(keys.next())
+        assertEquals("teams", keys.getString("PKTABLE_NAME"))
+        assertEquals("team_id", keys.getString("FKCOLUMN_NAME"))
+        assertEquals(java.sql.DatabaseMetaData.importedKeyCascade, keys.getInt("DELETE_RULE"))
+    }
+
+    @Test
+    fun rejectsNonMatchingCatalogAndSchemaPatterns() {
+        assertFalse(metaData().getTables("other", null, null, null).next())
+        assertFalse(metaData().getColumns(null, "other", "%", null).next())
     }
 }

@@ -24,21 +24,34 @@ public class D1ResultSet(
     private var closed = false
 
     override fun next(): Boolean {
+        ensureOpen()
         if (rowIndex < result.rows.size) rowIndex++
         return rowIndex < result.rows.size
     }
 
     override fun close() {
+        if (closed) return
         closed = true
+        when (statement) {
+            is D1Statement -> statement.onResultSetClosed(this)
+            is D1PreparedStatement -> statement.onResultSetClosed(this)
+        }
     }
 
     override fun isClosed(): Boolean = closed
 
-    override fun wasNull(): Boolean = lastWasNull
+    override fun wasNull(): Boolean {
+        ensureOpen()
+        return lastWasNull
+    }
+
+    private fun ensureOpen() {
+        if (closed) throw SQLException("result set is closed")
+    }
 
     /** 1-based column access with the SQL-NULL bookkeeping every getter shares. */
     private fun cell(columnIndex: Int): JsonElement {
-        if (closed) throw SQLException("result set is closed")
+        ensureOpen()
         if (rowIndex < 0 || rowIndex >= result.rows.size) {
             throw SQLException("no current row (call next() first)")
         }
@@ -52,6 +65,7 @@ public class D1ResultSet(
     }
 
     override fun findColumn(columnLabel: String?): Int {
+        ensureOpen()
         val idx = result.columns.indexOfFirst { it.equals(columnLabel, ignoreCase = true) }
         if (idx < 0) throw SQLException("no such column: $columnLabel")
         return idx + 1

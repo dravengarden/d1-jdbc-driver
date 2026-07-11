@@ -40,9 +40,14 @@ internal fun requireTool(transport: Transport, workingDir: String?, tool: String
         try {
             transport.run(listOf("sh", "-c", probe), workingDir)
         } catch (e: Exception) {
+            val advice =
+                if (transport.description == "this machine") {
+                    "Check the configured working directory and local executable permissions."
+                } else {
+                    "Check the host, key-based SSH auth, and known_hosts."
+                }
             throw IllegalStateException(
-                "${transport.description} is unreachable or refused the connection: ${e.message}. " +
-                    "Check the host, key-based SSH auth, and known_hosts.",
+                "Could not run a dependency probe on ${transport.description}: ${e.message}. $advice",
             )
         }
     if (out.trim() != "FOUND") {
@@ -59,7 +64,7 @@ private fun shq(s: String): String = "'" + s.replace("'", "'\\''") + "'"
 /** Flatten a list of JSON row-objects into the column/row shape the JDBC layer wants. */
 internal fun tabulate(rows: List<JsonObject>, changes: Long = 0, lastRowId: Long? = null): QueryResult {
     if (rows.isEmpty()) return QueryResult(emptyList(), emptyList(), changes, lastRowId)
-    val columns = rows.first().keys.toList()
+    val columns = buildList { rows.forEach { row -> row.keys.forEach { if (it !in this) add(it) } } }
     val tabular = rows.map { row -> columns.map { col -> row[col] ?: JsonNull } }
     return QueryResult(columns, tabular, changes, lastRowId)
 }

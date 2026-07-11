@@ -4,10 +4,12 @@ import io.github.dravengarden.d1.model.QueryResult
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import java.sql.Types
+import java.sql.SQLException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.test.assertFailsWith
 
 class D1ResultSetTest {
     private fun sample(): D1ResultSet {
@@ -58,5 +60,13 @@ class D1ResultSetTest {
         // All-null column defaults to TEXT/VARCHAR.
         assertEquals(Types.VARCHAR, md.getColumnType(4))
         assertEquals("id", md.getColumnName(1))
+    }
+
+    @Test
+    fun closedResultSetRejectsNavigationAndReads() {
+        val rs = sample()
+        rs.close()
+        assertFailsWith<SQLException> { rs.next() }
+        assertFailsWith<SQLException> { rs.findColumn("id") }
     }
 }

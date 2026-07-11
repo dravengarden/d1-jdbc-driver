@@ -82,4 +82,23 @@ class D1WriteTest {
         assertTrue(e.message!!.contains("access=ddl"))
         assertEquals(1, transport.calls, "rejected DDL must not reach the engine")
     }
+
+    @Test
+    fun readAccessRejectsWritesHiddenAfterAReadAndWritablePragmas() {
+        val transport = WriteTransport()
+        val st = connect(transport, access = Access.READ).createStatement()
+        assertFailsWith<java.sql.SQLException> { st.execute("SELECT 1; DELETE FROM accounts") }
+        assertFailsWith<java.sql.SQLException> { st.execute("PRAGMA user_version = 2") }
+        assertEquals(0, transport.calls)
+    }
+
+    @Test
+    fun jdbcReadOnlyFalseDoesNotGrantWriteAccess() {
+        val transport = WriteTransport()
+        val connection = connect(transport, access = Access.READ)
+        connection.isReadOnly = false
+        assertTrue(connection.isReadOnly)
+        assertFailsWith<java.sql.SQLException> { connection.createStatement().executeUpdate("DELETE FROM accounts") }
+        assertEquals(0, transport.calls)
+    }
 }

@@ -53,19 +53,28 @@ public class Wrangler(
         private val json = Json { ignoreUnknownKeys = true }
 
         /**
-         * wrangler may emit non-JSON lines before the array (e.g. a banner). Slice
-         * from the first `[` so parsing is robust; then take the last statement's
-         * result set.
+         * Wrangler may emit non-JSON lines before the array (including bracketed
+         * banners). Try candidate array starts from the end, then take the last
+         * statement's result set.
          */
         internal fun parse(stdout: String): QueryResult {
-            val start = stdout.indexOf('[')
-            require(start >= 0) { "no JSON array in wrangler output:\n$stdout" }
-            val results = json.decodeFromString<List<WranglerResult>>(stdout.substring(start))
+            val results = decodeResults(stdout)
+            val failure = results.firstOrNull { !it.success }
+            require(failure == null) { "wrangler reported an unsuccessful statement: ${failure?.error ?: "unknown error"}" }
             val last = results.lastOrNull()
             val meta = last?.meta
             val changes = meta?.get("changes")?.jsonPrimitive?.longOrNull ?: 0L
             val lastRowId = meta?.get("last_row_id")?.jsonPrimitive?.longOrNull
             return tabulate(last?.results ?: emptyList(), changes, lastRowId)
+        }
+
+        private fun decodeResults(stdout: String): List<WranglerResult> {
+            for (start in stdout.indices.reversed()) {
+                if (stdout[start] != '[') continue
+                val decoded = runCatching { json.decodeFromString<List<WranglerResult>>(stdout.substring(start).trim()) }.getOrNull()
+                if (decoded != null) return decoded
+            }
+            error("no valid JSON result array in wrangler output:\n${stdout.takeLast(1000)}")
         }
     }
 }
