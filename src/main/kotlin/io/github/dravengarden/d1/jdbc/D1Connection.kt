@@ -52,10 +52,14 @@ public class D1Connection internal constructor(
         return try {
             engine.query(sql)
         } catch (e: SQLException) {
-            if (authDeniedPragma(sql, e.message)) QueryResult(emptyList(), emptyList()) else throw e
+            if (authDeniedPragma(sql, e.message)) QueryResult(emptyList(), emptyList()) else { logErr(sql, e.message); throw e }
         } catch (e: Exception) {
-            if (authDeniedPragma(sql, e.message)) QueryResult(emptyList(), emptyList()) else throw SQLException(e.message ?: e.toString())
+            if (authDeniedPragma(sql, e.message)) QueryResult(emptyList(), emptyList()) else { logErr(sql, e.message); throw SQLException(e.message ?: e.toString()) }
         }
+    }
+
+    private fun logErr(sql: String, msg: String?) {
+        runCatching { java.io.File(System.getProperty("user.home"), "d1-jdbc-sql.log").appendText("ERR [${config.database}] $sql\n  => $msg\n----\n") }
     }
 
     /**
